@@ -60,6 +60,18 @@ func (a *App) CmdGlobalClean(opts GlobalCleanOpts) error {
 
 	totalRemoved := 0
 	for _, tool := range tools {
+		// Tool-specific pre-walk cleanup. For Claude, strip the
+		// managed @-imports block (and delete CLAUDE.md if no user
+		// content remains) BEFORE cleanToolDir runs — that way its
+		// empty-parent prune picks up a now-empty .claude/.
+		if tool.ID == "claude" {
+			n, err := a.cleanClaudeImportsBlock(parent)
+			if err != nil {
+				a.Warn(fmt.Sprintf("[%s] Claude @-imports cleanup: %v", tool.ID, err))
+			}
+			totalRemoved += n
+		}
+
 		dir := tool.DirForScope(ScopeGlobal, parent)
 		if dir == "" {
 			continue
@@ -77,6 +89,55 @@ func (a *App) CmdGlobalClean(opts GlobalCleanOpts) error {
 		a.Info(fmt.Sprintf("removed %d item(s) across %d tool(s)", totalRemoved, len(tools)))
 	}
 	return nil
+}
+
+// cleanClaudeImportsBlock removes the managed `@`-imports block
+// (see claude_imports.go) from ~/.claude/CLAUDE.md, preserving any
+// content the user wrote outside the markers. If stripping the block
+// leaves the file with no remaining user content (whitespace only),
+// the file itself is deleted so the parent .claude/ becomes eligible
+// for the standard empty-parent prune that cleanToolDir performs at
+// its tail.
+//
+// Returns 1 if an action was taken (or would be in dry-run), 0
+// otherwise. Skips silently when CLAUDE.md does not exist, or when
+// it exists but has no managed block (i.e. nothing for us to clean).
+func (a *App) cleanClaudeImportsBlock(parent string) (int, error) {
+	claudeMdPath := filepath.Join(parent, ".claude", "CLAUDE.md")
+	data, err := os.ReadFile(claudeMdPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	content := string(data)
+	if !strings.Contains(content, ClaudeImportsBlockStart) {
+		return 0, nil // not ours to clean
+	}
+	stripped := RemoveClaudeImportBlock(content)
+
+	if a.DryRun {
+		if strings.TrimSpace(stripped) == "" {
+			a.Info(fmt.Sprintf("[dry-run] would remove %s (no remaining user content)", claudeMdPath))
+		} else {
+			a.Info(fmt.Sprintf("[dry-run] would strip Claude @-imports block from %s", claudeMdPath))
+		}
+		return 1, nil
+	}
+
+	if strings.TrimSpace(stripped) == "" {
+		if err := os.Remove(claudeMdPath); err != nil {
+			return 0, err
+		}
+		a.Info(fmt.Sprintf("removed %s (no remaining user content)", claudeMdPath))
+		return 1, nil
+	}
+	if err := os.WriteFile(claudeMdPath, []byte(stripped), 0o644); err != nil {
+		return 0, err
+	}
+	a.Info(fmt.Sprintf("stripped Claude @-imports block from %s", claudeMdPath))
+	return 1, nil
 }
 
 // cleanToolDir walks one tool's per-scope directory and removes

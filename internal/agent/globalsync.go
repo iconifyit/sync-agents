@@ -81,6 +81,15 @@ func (a *App) CmdGlobalSync(opts GlobalSyncOpts) error {
 	// regenerate each target once after the artifact pass.
 	concatBatches := map[string][]ConcatEntry{}
 
+	// claudeImportPaths accumulates the destination paths of every
+	// passive rule that landed in Claude's symlink surface
+	// (~/.claude/rules/<name>.md). Claude does NOT auto-scan that
+	// directory (see issue #46), so we need to materialize these as
+	// `@`-imports inside ~/.claude/CLAUDE.md after the artifact pass.
+	// Skills and invocable rules/workflows do not need this — Claude
+	// auto-discovers them via their own surfaces (skills/, commands/).
+	var claudeImportPaths []string
+
 	a.Info(fmt.Sprintf("syncing %d artifact(s) to %d tool(s)", len(artifacts), len(tools)))
 
 	for _, art := range artifacts {
@@ -109,6 +118,13 @@ func (a *App) CmdGlobalSync(opts GlobalSyncOpts) error {
 					Name:       art.Name,
 					SourcePath: concatSourcePath(art),
 				})
+			}
+
+			// Track passive rules bound for Claude so we can write
+			// the @-imports block after the artifact pass. See
+			// claude_imports.go for why this is necessary.
+			if tool.ID == "claude" && dest.Strategy == StrategySymlink && sem == Passive {
+				claudeImportPaths = append(claudeImportPaths, dest.Path)
 			}
 		}
 	}
@@ -139,10 +155,47 @@ func (a *App) CmdGlobalSync(opts GlobalSyncOpts) error {
 		}
 	}
 
+	// If Claude was in the sync scope, regenerate its managed
+	// @-imports block in ~/.claude/CLAUDE.md. This runs even when
+	// claudeImportPaths is empty: an empty rules set should still
+	// produce a markers-only block (or strip a stale block from a
+	// prior sync that had rules).
+	if hasTool(tools, "claude") {
+		claudeMdPath := filepath.Join(parent, ".claude", "CLAUDE.md")
+		if a.DryRun {
+			a.Info(fmt.Sprintf("[dry-run] would write Claude @-imports block to %s (%d rule import(s))",
+				claudeMdPath, len(claudeImportPaths)))
+		} else {
+			changed, err := WriteClaudeImportsBlock(claudeMdPath, claudeImportPaths)
+			switch {
+			case err != nil:
+				a.Warn(fmt.Sprintf("Claude @-imports block write failed: %v", err))
+			case changed:
+				a.Info(fmt.Sprintf("regenerated %s (%d rule import(s))",
+					claudeMdPath, len(claudeImportPaths)))
+			default:
+				a.Info(fmt.Sprintf("%s already current (%d rule import(s))",
+					claudeMdPath, len(claudeImportPaths)))
+			}
+		}
+	}
+
 	if !a.DryRun {
 		a.Info("global sync complete")
 	}
 	return nil
+}
+
+// hasTool reports whether `tools` contains a Tool with the given ID.
+// Used to gate per-tool post-sync steps (e.g. the Claude @-imports
+// block) on whether that tool was actually in the sync scope.
+func hasTool(tools []Tool, id string) bool {
+	for _, t := range tools {
+		if t.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveSyncTools filters the Tools registry by the --targets list
