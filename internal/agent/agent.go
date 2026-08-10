@@ -476,6 +476,10 @@ func (a *App) CmdIndex() error {
 		return err
 	}
 	a.generateAgentsMD()
+	if a.DryRun {
+		a.Info("Would regenerate AGENTS.md")
+		return nil
+	}
 	a.Info("Regenerated AGENTS.md")
 	return nil
 }
@@ -1240,6 +1244,17 @@ func (a *App) generateAgentsMD() {
 	b.WriteString("> Run `sync-agents index` to regenerate.\n\n")
 	b.WriteString("This file indexes all rules, skills, and workflows defined in `.agents/`.\n\n")
 
+	// Hand-authored global content, injected verbatim between the
+	// header and the generated index sections. Absent by default —
+	// see preamble.go and SPEC-007.
+	if preamble, ok := a.ReadPreamble(); ok {
+		b.WriteString(preamble)
+		b.WriteString("\n\n")
+		if a.DryRun {
+			fmt.Fprintf(a.Stdout, "  would inject preamble: %s\n", a.ResolvePreamblePath())
+		}
+	}
+
 	if inheritsBlock != "" {
 		// Trim captured trailing blank lines before re-adding the
 		// section separator — otherwise every regeneration appends
@@ -1452,6 +1467,14 @@ func (a *App) generateAgentsMD() {
 				}
 			}
 		}
+	}
+
+	// A dry run must never touch the filesystem. This guard lives here
+	// rather than at each call site so every path that regenerates the
+	// index inherits it.
+	if a.DryRun {
+		fmt.Fprintf(a.Stdout, "  would write: %s\n", outfile)
+		return
 	}
 
 	os.WriteFile(outfile, []byte(finalContent), 0644)
