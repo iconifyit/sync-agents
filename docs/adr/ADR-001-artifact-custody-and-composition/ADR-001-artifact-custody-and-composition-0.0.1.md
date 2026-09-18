@@ -112,6 +112,8 @@ Inclusion is **ordered concatenation, verbatim**. There is no templating, no var
 Two stages, distinct:
 
 1. **Compose** (authoring): a `build` step expands each artifact's `includes` and writes the composed artifact into the canonical tree. The output is committed to version control.
+
+   For flat-file buckets (`rules`, `workflows`, `agents`, `plans`, `specs`) the composed output replaces the artifact file. For `skills`, which are `DirPerArtifact: true`, the unit of composition is `SKILL.md` inside the skill directory: `includes:` is declared in its frontmatter and the composed output replaces `SKILL.md` in place. Other files in a skill directory are not composed and are carried through untouched.
 2. **Materialize** (sync): the existing symlink fan-out, operating on composed artifacts, unchanged.
 
 *Rationale.* Expanding at materialization time would require writing generated *copies* into per-tool directories, destroying the no-divergence property that D1 depends on. Composing at authoring time keeps materialization purely symlink-based and, because the output is committed, `git diff` shows exactly what changed in every affected artifact when a module is edited. That reviewability is the point — a module edit that silently alters fifteen artifacts is a change nobody reviewed.
@@ -200,6 +202,8 @@ The successor is written in Node/TypeScript rather than continuing the Go implem
 This ADR is a design decision and removes no code on its own. The removals it commits to, landing with the SPECs that implement it:
 
 - **`AGENTS.preamble.md` as a distinct concept**, along with the preamble-specific injection path added by SPEC-007 (`internal/agent/preamble.go` and its `index` call site, both on branch `feat/agents-md-preamble`). Superseded by the module system (D4): the live 16 KB file decomposes into `modules/engineering-principles.md` and `modules/architectural-thesis.md`, and the preamble becomes an ordinary artifact that includes them. This is a migration with a data move, not a plain deletion — the decomposition must land before the injection path is removed.
+
+  The migration must also account for the live tree's actual layout, which the canonical-tree description above simplifies. In `@agents`, `.agents/` is a symlink façade over repository-root content: `.agents/AGENTS.preamble.md → ../AGENTS.preamble.md`, and `.agents/{rules,skills,workflows}` are likewise symlinks to root-level directories. The migration must decide where `modules/` physically lives and whether that indirection is preserved or flattened.
 - **The cross-platform build and publish apparatus**, on reimplementation (D9): `npm/` (five platform packages), `.goreleaser.yaml`, `scripts/build-all.js`, `scripts/build-platform.js`, `scripts/lib/platforms.js`, `scripts/sync-optional-deps.js`, `scripts/bootstrap-platform-publish.sh`, and `scripts/goreleaser-check-version.sh`.
 - **The Go implementation** in its entirety (`main.go`, `internal/`), superseded by the reimplementation. Not removed until the successor passes the ported acceptance suite (see below).
 
