@@ -52,12 +52,24 @@ var agentsRelativeLinkRegexp = regexp.MustCompile(`\]\(\.agents/`)
 // AGENTS.md indexes artifacts as `](.agents/rules/x.md)`, which is
 // correct relative to the agents repo. Copied verbatim into
 // ~/.claude/CLAUDE.md those become ~/.claude/.agents/rules/x.md, which
-// does not exist — every index link would dangle. Rewriting to absolute
-// paths keeps them working from any location.
+// does not exist — every index link would dangle.
+//
+// The rewrite targets the REAL directory, dropping the `.agents/`
+// segment: `.agents/rules`, `.agents/skills`, and `.agents/workflows`
+// are all symlinks to `../rules`, `../skills`, and `../workflows`, so
+// `<root>/rules/x.md` and `<root>/.agents/rules/x.md` are the same file
+// — but only the former is reachable without following a symlink.
+//
+// That difference is not cosmetic. Editors that decline to traverse
+// symlinks (VS Code with `search.followSymlinks: false`, for one)
+// report the `.agents/` form as a missing file and offer to create it,
+// even though the target exists. Linking through the real path makes
+// the index work regardless of how the reader treats symlinks, and
+// points at the source of truth rather than the generated overlay.
 func AbsolutizeAgentsMDLinks(content, agentsRepoRoot string) string {
 	return agentsRelativeLinkRegexp.ReplaceAllString(
 		content,
-		"]("+agentsRepoRoot+string(filepath.Separator)+".agents/",
+		"]("+agentsRepoRoot+string(filepath.Separator),
 	)
 }
 

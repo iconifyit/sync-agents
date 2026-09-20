@@ -67,6 +67,10 @@ func TestResolveGlobalAgentsMDPath_EmptyWhenAbsent(t *testing.T) {
 // AGENTS.md indexes artifacts relative to the agents repo. Mirrored
 // verbatim into ~/.claude/CLAUDE.md those resolve to
 // ~/.claude/.agents/... and dangle, so they must be absolutized.
+// The rewrite must land on the REAL directory, not the `.agents/`
+// symlink overlay. Both resolve to the same file, but readers that
+// decline to follow symlinks (VS Code with search.followSymlinks off)
+// report the `.agents/` form as missing and offer to create it.
 func TestAbsolutizeAgentsMDLinks(t *testing.T) {
 	in := "- [adr-required](.agents/rules/adr-required.md)\n- [plan](.agents/skills/plan/SKILL.md)\n"
 	out := AbsolutizeAgentsMDLinks(in, "/repo")
@@ -74,10 +78,50 @@ func TestAbsolutizeAgentsMDLinks(t *testing.T) {
 	if strings.Contains(out, "](.agents/") {
 		t.Errorf("relative link survived absolutization:\n%s", out)
 	}
-	for _, want := range []string{"](/repo/.agents/rules/adr-required.md)", "](/repo/.agents/skills/plan/SKILL.md)"} {
+	for _, want := range []string{"](/repo/rules/adr-required.md)", "](/repo/skills/plan/SKILL.md)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "/repo/.agents/") {
+		t.Errorf("link still routes through the .agents symlink overlay:\n%s", out)
+	}
+}
+
+// The rewritten path must reach the same file as the .agents/ form.
+// This is what makes dropping the segment safe rather than merely
+// cosmetic: .agents/<bucket> is a symlink to ../<bucket>.
+func TestAbsolutizeAgentsMDLinks_RewrittenPathReachesTheSameFile(t *testing.T) {
+	repoRoot, _ := seedAgentsRepo(t, "# AGENTS\n")
+	rule := filepath.Join(repoRoot, "rules", "demo.md")
+	if err := os.MkdirAll(filepath.Dir(rule), 0o755); err != nil {
+		t.Fatalf("seeding rules dir: %v", err)
+	}
+	if err := os.WriteFile(rule, []byte("# demo\n"), 0o644); err != nil {
+		t.Fatalf("seeding rule: %v", err)
+	}
+	// seedAgentsRepo makes .agents/rules a real directory; production
+	// has it as a symlink to ../rules, which is the shape under test.
+	overlay := filepath.Join(repoRoot, ".agents", "rules")
+	if err := os.RemoveAll(overlay); err != nil {
+		t.Fatalf("clearing overlay dir: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(repoRoot, "rules"), overlay); err != nil {
+		t.Fatalf("symlinking .agents/rules: %v", err)
+	}
+
+	out := AbsolutizeAgentsMDLinks("[demo](.agents/rules/demo.md)", repoRoot)
+
+	start := strings.Index(out, "](") + 2
+	got := out[start : len(out)-1]
+	if _, err := os.Lstat(got); err != nil {
+		t.Fatalf("rewritten path does not exist without following a symlink: %s (%v)", got, err)
+	}
+	viaOverlay := filepath.Join(repoRoot, ".agents", "rules", "demo.md")
+	a, _ := filepath.EvalSymlinks(got)
+	b, _ := filepath.EvalSymlinks(viaOverlay)
+	if a != b {
+		t.Errorf("rewritten path resolves elsewhere:\n  got:     %s -> %s\n  overlay: %s -> %s", got, a, viaOverlay, b)
 	}
 }
 
