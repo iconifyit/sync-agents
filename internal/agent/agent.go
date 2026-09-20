@@ -1269,7 +1269,7 @@ func (a *App) generateAgentsMD() {
 	ruleFiles := listMDFiles(rulesDir)
 	if len(ruleFiles) > 0 {
 		for _, name := range ruleFiles {
-			b.WriteString(indexEntry(name, ".agents/rules/"+name+".md", filepath.Join(rulesDir, name+".md")))
+			b.WriteString(indexEntry(name, BucketLinkPrefix(a.ProjectRoot, agentsDir, "rules")+"/"+name+".md", filepath.Join(rulesDir, name+".md")))
 		}
 	} else {
 		b.WriteString("_No rules defined yet. Add one with `sync-agents add rule <name>`._\n")
@@ -1288,7 +1288,7 @@ func (a *App) generateAgentsMD() {
 			name := entry.Name()
 			skillFile := filepath.Join(skillsDir, name, "SKILL.md")
 			if _, err := os.Stat(skillFile); err == nil {
-				b.WriteString(indexEntry(name, ".agents/skills/"+name+"/SKILL.md", skillFile))
+				b.WriteString(indexEntry(name, BucketLinkPrefix(a.ProjectRoot, agentsDir, "skills")+"/"+name+"/SKILL.md", skillFile))
 				hasSkills = true
 			}
 		}
@@ -1316,7 +1316,7 @@ func (a *App) generateAgentsMD() {
 	wfFiles := listMDFiles(workflowsDir)
 	if len(wfFiles) > 0 {
 		for _, name := range wfFiles {
-			b.WriteString(indexEntry(name, ".agents/workflows/"+name+".md", filepath.Join(workflowsDir, name+".md")))
+			b.WriteString(indexEntry(name, BucketLinkPrefix(a.ProjectRoot, agentsDir, "workflows")+"/"+name+".md", filepath.Join(workflowsDir, name+".md")))
 		}
 	} else {
 		b.WriteString("_No workflows defined yet. Add one with `sync-agents add workflow <name>`._\n")
@@ -1330,7 +1330,7 @@ func (a *App) generateAgentsMD() {
 	if agentFiles := listMDFiles(agentsBucketDir); len(agentFiles) > 0 {
 		b.WriteString("## Agents\n\n")
 		for _, name := range agentFiles {
-			b.WriteString(indexEntry(name, ".agents/agents/"+name+".md", filepath.Join(agentsBucketDir, name+".md")))
+			b.WriteString(indexEntry(name, BucketLinkPrefix(a.ProjectRoot, agentsDir, "agents")+"/"+name+".md", filepath.Join(agentsBucketDir, name+".md")))
 		}
 		b.WriteString("\n")
 	}
@@ -1352,7 +1352,7 @@ func (a *App) generateAgentsMD() {
 		}
 		b.WriteString("## " + ref.title + "\n\n")
 		for _, rel := range files {
-			link := ".agents/" + ref.dir + "/" + rel + ".md"
+			link := BucketLinkPrefix(a.ProjectRoot, agentsDir, ref.dir) + "/" + rel + ".md"
 			b.WriteString(indexEntry(rel, link, filepath.Join(refDir, filepath.FromSlash(rel)+".md")))
 		}
 		b.WriteString("\n")
@@ -1371,7 +1371,7 @@ func (a *App) generateAgentsMD() {
 			sort.Strings(hookFiles)
 			b.WriteString("## Hooks\n\n")
 			for _, name := range hookFiles {
-				link := ".agents/hooks/" + name
+				link := BucketLinkPrefix(a.ProjectRoot, agentsDir, "hooks") + "/" + name
 				srcPath := filepath.Join(hooksBucketDir, name)
 				// Hook fragments don't have markdown frontmatter for
 				// description — just link the file.

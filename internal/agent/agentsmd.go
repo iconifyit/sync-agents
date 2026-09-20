@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 // Markers for the AGENTS.md mirror inside a global CLAUDE.md.
@@ -124,4 +125,47 @@ func RegenerateAgentsMDBlock(claudeMDPath, agentsMDPath string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// BucketLinkPrefix returns the path prefix to use when the generated
+// AGENTS.md index links a bucket's artifacts.
+//
+// Normally that is `.agents/<bucket>`, because `sync-agents init`
+// creates those as real directories and the artifacts genuinely live
+// there.
+//
+// The agents repo inverts this: the real `rules/`, `skills/`, and
+// `workflows/` sit at the project root and `.agents/<bucket>` is a
+// symlink pointing back at them (ADR-001). Both paths reach the same
+// file, but the `.agents/` one only via a symlink — and readers that
+// decline to follow symlinks (VS Code with `search.followSymlinks:
+// false`) then report every index link as a missing file.
+//
+// So when the bucket is a symlink resolving inside the project, link
+// the resolved location instead. Anything else — a real directory, an
+// unreadable path, or a link escaping the project — keeps the
+// `.agents/` form, which is correct for the normal layout.
+func BucketLinkPrefix(projectRoot, agentsDir, bucket string) string {
+	fallback := ".agents/" + bucket
+
+	info, err := os.Lstat(filepath.Join(agentsDir, bucket))
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return fallback
+	}
+
+	resolved, err := filepath.EvalSymlinks(filepath.Join(agentsDir, bucket))
+	if err != nil {
+		return fallback
+	}
+	root, err := filepath.EvalSymlinks(projectRoot)
+	if err != nil {
+		root = projectRoot
+	}
+
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		// Escapes the project — a relative link would not resolve.
+		return fallback
+	}
+	return filepath.ToSlash(rel)
 }

@@ -267,3 +267,67 @@ func readFileString(t *testing.T, path string) string {
 	}
 	return string(data)
 }
+
+// A normal project has real .agents/<bucket> dirs; the index must keep
+// linking through .agents/ there, because that is where the files are.
+func TestBucketLinkPrefix_RealDirectoryKeepsAgentsPrefix(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".agents", "rules"), 0o755); err != nil {
+		t.Fatalf("seeding: %v", err)
+	}
+	got := BucketLinkPrefix(root, filepath.Join(root, ".agents"), "rules")
+	if got != ".agents/rules" {
+		t.Errorf("BucketLinkPrefix() = %q, want %q", got, ".agents/rules")
+	}
+}
+
+// The agents repo inverts the layout: real dirs at root, .agents/<bucket>
+// a symlink back to them. Link the real location so the path needs no
+// symlink traversal.
+func TestBucketLinkPrefix_SymlinkedBucketUsesResolvedPath(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "rules"), 0o755); err != nil {
+		t.Fatalf("seeding rules: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".agents"), 0o755); err != nil {
+		t.Fatalf("seeding .agents: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(root, "rules"), filepath.Join(root, ".agents", "rules")); err != nil {
+		t.Fatalf("symlinking: %v", err)
+	}
+	got := BucketLinkPrefix(root, filepath.Join(root, ".agents"), "rules")
+	if got != "rules" {
+		t.Errorf("BucketLinkPrefix() = %q, want %q", got, "rules")
+	}
+}
+
+// A bucket symlinked outside the project cannot be reached by a
+// project-relative link, so keep the .agents/ form rather than emit
+// something that escapes the repo.
+func TestBucketLinkPrefix_SymlinkEscapingProjectKeepsAgentsPrefix(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "project")
+	outside := filepath.Join(base, "elsewhere", "rules")
+	if err := os.MkdirAll(filepath.Join(root, ".agents"), 0o755); err != nil {
+		t.Fatalf("seeding project: %v", err)
+	}
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatalf("seeding outside: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, ".agents", "rules")); err != nil {
+		t.Fatalf("symlinking: %v", err)
+	}
+	got := BucketLinkPrefix(root, filepath.Join(root, ".agents"), "rules")
+	if got != ".agents/rules" {
+		t.Errorf("BucketLinkPrefix() = %q, want %q (must not emit an escaping path)", got, ".agents/rules")
+	}
+}
+
+// A missing bucket must not panic or emit a bare path.
+func TestBucketLinkPrefix_MissingBucketKeepsAgentsPrefix(t *testing.T) {
+	root := t.TempDir()
+	got := BucketLinkPrefix(root, filepath.Join(root, ".agents"), "workflows")
+	if got != ".agents/workflows" {
+		t.Errorf("BucketLinkPrefix() = %q, want %q", got, ".agents/workflows")
+	}
+}
