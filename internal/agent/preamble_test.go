@@ -284,3 +284,67 @@ func TestCmdIndex_RealRunWrites(t *testing.T) {
 		t.Errorf("real run did not report regeneration: %q", stdout.String())
 	}
 }
+
+// A preamble that cannot be read at index time must not silently
+// vanish from an AGENTS.md that already has one. The failure this
+// guards is invisible in normal use: the command succeeds and the
+// file shrinks by however long the preamble was.
+func TestIndex_RefusesToDropExistingPreamble(t *testing.T) {
+	app, dir := newTestApp(t)
+	agentsDir := filepath.Join(dir, ".agents")
+	if err := os.MkdirAll(filepath.Join(agentsDir, "rules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDir, "rules", "r.md"),
+		[]byte("---\ntrigger: always_on\n---\n\n# r\n\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	preamblePath := filepath.Join(agentsDir, PreambleFileName)
+	const sentinel = "Scott's Engineering Principles"
+	body := []byte("# " + sentinel + "\n\nThis must survive.\n")
+	if err := os.WriteFile(preamblePath, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.CmdIndex(); err != nil {
+		t.Fatalf("first index: %v", err)
+	}
+
+	agentsMD := filepath.Join(dir, "AGENTS.md")
+	before := readFile(t, agentsMD)
+	if !strings.Contains(before, sentinel) {
+		t.Fatalf("preamble was not injected on the first run")
+	}
+	if !strings.Contains(before, PreambleMarker) {
+		t.Fatalf("preamble marker was not written; the guard has nothing to detect")
+	}
+
+	// The preamble becomes unreadable — a fresh clone without it, a
+	// wrong --global-root, a rename.
+	if err := os.Remove(preamblePath); err != nil {
+		t.Fatal(err)
+	}
+
+	err := app.CmdIndex()
+	if err == nil {
+		t.Fatalf("index succeeded with the preamble missing; it must refuse")
+	}
+	if !strings.Contains(err.Error(), "refusing to write") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if after := readFile(t, agentsMD); after != before {
+		t.Fatalf("AGENTS.md changed despite the refusal: %d bytes before, %d after", len(before), len(after))
+	}
+
+	// Restoring it makes index work again — the guard must not latch.
+	if err := os.WriteFile(preamblePath, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.CmdIndex(); err != nil {
+		t.Fatalf("index after restoring the preamble: %v", err)
+	}
+	if !strings.Contains(readFile(t, agentsMD), sentinel) {
+		t.Fatalf("preamble missing after restore")
+	}
+}

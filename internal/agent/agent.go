@@ -274,7 +274,9 @@ func (a *App) CmdInit() error {
 	// AGENTS.md
 	agentsMD := filepath.Join(a.ProjectRoot, "AGENTS.md")
 	if _, err := os.Stat(agentsMD); os.IsNotExist(err) {
-		a.generateAgentsMD()
+		if err := a.generateAgentsMD(); err != nil {
+			return err
+		}
 		a.Info("Created AGENTS.md")
 	} else {
 		a.Warn("AGENTS.md already exists, skipping (run 'sync-agents index' to regenerate)")
@@ -322,7 +324,9 @@ func (a *App) CmdAdd(typ, name string) error {
 	os.WriteFile(fpath, []byte(content), 0644)
 	a.Info(fmt.Sprintf("Created %s: %s", typ, fpath))
 
-	a.generateAgentsMD()
+	if err := a.generateAgentsMD(); err != nil {
+		return err
+	}
 	a.Info("Updated AGENTS.md index")
 	return nil
 }
@@ -475,7 +479,9 @@ func (a *App) CmdIndex() error {
 	if err := a.EnsureAgentsDir(); err != nil {
 		return err
 	}
-	a.generateAgentsMD()
+	if err := a.generateAgentsMD(); err != nil {
+		return err
+	}
 	if a.DryRun {
 		a.Info("Would regenerate AGENTS.md")
 		return nil
@@ -1215,7 +1221,7 @@ func (a *App) migrateLegacyState(agentsDir string) {
 	a.Info("Removed legacy .agents/STATE.md (replaced by rules/state.md pattern)")
 }
 
-func (a *App) generateAgentsMD() {
+func (a *App) generateAgentsMD() error {
 	outfile := filepath.Join(a.ProjectRoot, "AGENTS.md")
 	agentsDir := filepath.Join(a.ProjectRoot, ".agents")
 
@@ -1248,6 +1254,8 @@ func (a *App) generateAgentsMD() {
 	// header and the generated index sections. Absent by default —
 	// see preamble.go and SPEC-007.
 	if preamble, ok := a.ReadPreamble(); ok {
+		b.WriteString(PreambleMarker)
+		b.WriteString("\n\n")
 		b.WriteString(preamble)
 		b.WriteString("\n\n")
 		if a.DryRun {
@@ -1474,10 +1482,20 @@ func (a *App) generateAgentsMD() {
 	// index inherits it.
 	if a.DryRun {
 		fmt.Fprintf(a.Stdout, "  would write: %s\n", outfile)
-		return
+		return nil
+	}
+
+	// Refuse to regenerate an index that would drop preamble content
+	// the existing file has. The preamble is usually most of AGENTS.md
+	// and its loss is silent, so this fails loudly instead.
+	if preambleWouldBeDropped(outfile, finalContent) {
+		fmt.Fprintf(a.Stderr, "        expected the preamble at: %s\n", a.ResolvePreamblePath())
+		fmt.Fprintf(a.Stderr, "        regenerating now would delete it; check --global-root and $SYNC_AGENTS_GLOBAL_ROOT, or restore the file\n")
+		return fmt.Errorf("refusing to write %s: it contains preamble content and this run produced none", outfile)
 	}
 
 	os.WriteFile(outfile, []byte(finalContent), 0644)
+	return nil
 }
 
 func listMDFiles(dir string) []string {

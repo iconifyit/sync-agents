@@ -16,6 +16,17 @@ import (
 // machine-generated. See SPEC-007.
 const PreambleFileName = "AGENTS.preamble.md"
 
+// PreambleMarker is written into the generated index immediately
+// before injected preamble content.
+//
+// Its purpose is to make the preamble's presence detectable in the
+// output, so a later run that would drop it can refuse rather than
+// silently strip. AGENTS.md is regenerated wholesale, the preamble is
+// frequently the bulk of it, and the failure is invisible: the
+// command succeeds and the file shrinks by a few hundred lines. See
+// preambleWouldBeDropped.
+const PreambleMarker = "<!-- sync-agents:preamble -->"
+
 // ResolvePreamblePath returns the absolute path of the global
 // preamble file.
 //
@@ -57,4 +68,28 @@ func (a *App) ReadPreamble() (string, bool) {
 		return "", false
 	}
 	return content, true
+}
+
+// preambleWouldBeDropped reports whether writing newContent over the
+// file at path would remove preamble content that is currently there.
+//
+// This catches the case where the preamble file cannot be read at
+// index time — a fresh clone that has not got it, a --global-root
+// pointing at the wrong tree, a rename — and the run would therefore
+// regenerate an index without it. ReadPreamble treats an unreadable
+// preamble as simply absent, which is correct for a repository that
+// never had one and wrong for one that did.
+//
+// It cannot protect against a build with no preamble support at all,
+// since such a build does not run this check. That gap closes by
+// releasing, not by code here.
+func preambleWouldBeDropped(path, newContent string) bool {
+	if strings.Contains(newContent, PreambleMarker) {
+		return false
+	}
+	existing, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(existing), PreambleMarker)
 }
