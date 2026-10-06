@@ -1452,16 +1452,19 @@ func (a *App) generateAgentsMD() error {
 			Semantic: sem,
 		})
 	}
-	if importLines := ManagedImportBlockForLocal(localArts); len(importLines) > 0 {
-		importBlock := FormatManagedImportBlockForTest(importLines)
-		b.WriteString(importBlock)
-	}
+	// No @-import block here. @-imports are Claude's mechanism for
+	// loading rules, and global sync writes them straight into
+	// CLAUDE.md (see RegenerateClaudeImports). Emitting them into
+	// AGENTS.md as well put a second copy into CLAUDE.md by way of
+	// the mirror, so every rule loaded twice in every session. Other
+	// agents read the markdown links in the index above; they have no
+	// use for @-imports either.
 
-	// Strip any stale managed block the user previously had in
-	// AGENTS.md when the current .agents/ has no passive rules
-	// (so a deleted rule doesn't leave a dead @-import forever).
+	// Strip any import block an earlier version of this generator
+	// wrote into AGENTS.md. Unconditional: the block is never emitted
+	// now, so one found here is always stale.
 	finalContent := b.String()
-	if len(localArts) == 0 {
+	{
 		if existing, err := os.ReadFile(outfile); err == nil {
 			if HasManagedImportBlock(string(existing)) {
 				startIdx := strings.Index(string(existing), ManagedImportBlockStart)
