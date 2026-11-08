@@ -323,3 +323,24 @@ func TestCmdGlobalStatus_UserSkillDirLink(t *testing.T) {
 		t.Errorf("user skill link: want [not-a-symlink], got %q\n%s", line, stdout.String())
 	}
 }
+
+// TestCmdGlobalStatus_AliasedSkillDirIsSynced: when the Claude skills
+// dir is a link to the global skills tree, each skill is already in
+// place, and status says so rather than reporting a conflict.
+func TestCmdGlobalStatus_AliasedSkillDirIsSynced(t *testing.T) {
+	a, root, stdout := newStatusTestApp(t)
+	seedSkill(t, a.ResolveGlobalRoot(), "big", "# big skill\n", nil)
+	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(a.ResolveGlobalRoot(), "skills"), filepath.Join(root, ".claude", "skills")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.CmdGlobalStatus(GlobalStatusOpts{Targets: []string{"claude"}}); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if line := statusLineFor(stdout.String(), "skill/big"); !strings.Contains(line, "[synced]") {
+		t.Errorf("aliased skill: want [synced], got %q\n%s", line, stdout.String())
+	}
+}

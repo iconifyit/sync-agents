@@ -265,6 +265,9 @@ func classifySymlinkDestination(destPath, wantTarget string) (DestinationState, 
 		return StateNotSymlink, err.Error()
 	}
 	if info.Mode()&os.ModeSymlink == 0 {
+		if isSameDir(destPath, wantTarget) {
+			return StateSynced, "reached through a linked bucket directory"
+		}
 		if isLegacyClaudeSkillDir(destPath, wantTarget) {
 			return StateDrifted, "legacy skill dir linking only SKILL.md; sync replaces it with a link to the skill directory"
 		}

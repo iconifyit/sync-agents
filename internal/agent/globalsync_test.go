@@ -773,3 +773,38 @@ func TestCmdGlobalSync_LeavesUserSkillDirLink(t *testing.T) {
 		t.Errorf("--force touched the user's directory: %v", err)
 	}
 }
+
+// TestCmdGlobalSync_ForceLeavesSourceWhenBucketAliasesIt: if the Claude
+// skills dir is itself a link to the global skills tree, the skill
+// destination IS the skill's source directory. Even with --force, sync
+// must not move that directory aside or replace it with a link to
+// itself; the skill is already in place.
+func TestCmdGlobalSync_ForceLeavesSourceWhenBucketAliasesIt(t *testing.T) {
+	a, root, _ := newGlobalSyncTestApp(t)
+	a.Force = true
+	seedSkill(t, a.ResolveGlobalRoot(), "big", "# big skill\n", map[string]string{"helper.txt": "support"})
+	source := filepath.Join(a.ResolveGlobalRoot(), "skills", "big")
+	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(a.ResolveGlobalRoot(), "skills"), filepath.Join(root, ".claude", "skills")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.CmdGlobalSync(GlobalSyncOpts{Targets: []string{"claude"}}); err != nil {
+		t.Fatalf("CmdGlobalSync: %v", err)
+	}
+
+	info, err := os.Lstat(source)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("skill source is no longer a real directory: info=%v err=%v", info, err)
+	}
+	for _, f := range []string{"SKILL.md", "helper.txt"} {
+		if _, err := os.Stat(filepath.Join(source, f)); err != nil {
+			t.Errorf("skill source file %s lost: %v", f, err)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(root, ".claude", ".replaced-by-sync-agents")); !os.IsNotExist(err) {
+		t.Errorf("sync moved something aside: %v", err)
+	}
+}

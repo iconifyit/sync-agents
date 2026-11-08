@@ -296,6 +296,8 @@ func (a *App) resolveSyncTools(targets []string) ([]Tool, error) {
 //     directory outside the global root is the user's (see
 //     isUserDirLink) and is replaced only with App.Force, with a
 //     warning naming its old target. Any other link is repaired.
+//   - The target itself at dest, reached through a linked bucket dir
+//     (see isSameDir): already in place; nothing is changed.
 //   - A legacy Claude skill dir at dest (see isLegacyClaudeSkillDir):
 //     remove its one SKILL.md link and the then-empty dir, and place
 //     the directory link. Nothing but a link sync-agents created is
@@ -341,6 +343,12 @@ func (a *App) applySymlinkDestination(toolID string, dest Destination) error {
 				}
 				a.Info(fmt.Sprintf("[%s] repair: %s now -> %s", toolID, dest.Path, target))
 			}
+		} else if isSameDir(dest.Path, target) {
+			// The destination is the target itself, reached through a
+			// linked bucket dir (e.g. .claude/skills -> .agents/skills).
+			// It is already in place, and moving it aside would move the
+			// artifact's source.
+			return nil
 		} else if isLegacyClaudeSkillDir(dest.Path, target) {
 			if err := os.Remove(filepath.Join(dest.Path, "SKILL.md")); err != nil {
 				return err
@@ -396,6 +404,17 @@ func isUserDirLink(path, globalRoot string) bool {
 		return false
 	}
 	return !symlinkPointsInto(path, globalRoot)
+}
+
+// isSameDir reports whether path and target are the same directory on
+// disk, however each is reached.
+func isSameDir(path, target string) bool {
+	pathInfo, err := os.Stat(path)
+	if err != nil || !pathInfo.IsDir() {
+		return false
+	}
+	targetInfo, err := os.Stat(target)
+	return err == nil && os.SameFile(pathInfo, targetInfo)
 }
 
 // forcedBackupPath returns where --force moves a non-symlink that is
