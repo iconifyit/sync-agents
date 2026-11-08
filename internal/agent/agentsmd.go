@@ -42,36 +42,56 @@ func ResolveGlobalAgentsMDPath(globalRoot string) string {
 	return candidate
 }
 
-// agentsRelativeLinkRegexp matches markdown links whose target is
-// relative to the agents repo root, e.g. `](.agents/rules/x.md)`.
-var agentsRelativeLinkRegexp = regexp.MustCompile(`\]\(\.agents/`)
+// markdownLinkTargetRegexp matches a markdown link target: the text
+// between `](` and the closing `)`.
+var markdownLinkTargetRegexp = regexp.MustCompile(`\]\(([^)\s]+)\)`)
 
-// AbsolutizeAgentsMDLinks rewrites repo-relative links in AGENTS.md so
-// they still resolve once the content is mirrored into a CLAUDE.md that
-// lives somewhere else.
+// AbsolutizeAgentsMDLinks rewrites the relative links in AGENTS.md as
+// absolute paths under agentsRepoRoot, so they still resolve once the
+// content is mirrored into a CLAUDE.md that lives somewhere else.
 //
-// AGENTS.md indexes artifacts as `](.agents/rules/x.md)`, which is
-// correct relative to the agents repo. Copied verbatim into
-// ~/.claude/CLAUDE.md those become ~/.claude/.agents/rules/x.md, which
-// does not exist — every index link would dangle.
+// AGENTS.md links its artifacts relative to its own directory: as
+// `.agents/<bucket>/...` when the bucket is a real directory, or as the
+// resolved `<bucket>/...` when `.agents/<bucket>` is a symlink back into
+// the repo (see BucketLinkPrefix). Copied verbatim into
+// ~/.claude/CLAUDE.md, either form would resolve under ~/.claude/ and
+// dangle. Every relative target is therefore joined to agentsRepoRoot.
 //
-// The rewrite targets the REAL directory, dropping the `.agents/`
-// segment: `.agents/rules`, `.agents/skills`, and `.agents/workflows`
-// are all symlinks to `../rules`, `../skills`, and `../workflows`, so
-// `<root>/rules/x.md` and `<root>/.agents/rules/x.md` are the same file
-// — but only the former is reachable without following a symlink.
+// A `.agents/<bucket>/` target whose bucket is a symlink resolving
+// inside the repo is rewritten to the resolved directory, so the link
+// reaches the file without following a symlink: editors that decline to
+// traverse symlinks (VS Code with `search.followSymlinks: false`, for
+// one) otherwise report it as missing. A real `.agents/<bucket>`
+// directory keeps its `.agents/` segment, because that is where the
+// file is.
 //
-// That difference is not cosmetic. Editors that decline to traverse
-// symlinks (VS Code with `search.followSymlinks: false`, for one)
-// report the `.agents/` form as a missing file and offer to create it,
-// even though the target exists. Linking through the real path makes
-// the index work regardless of how the reader treats symlinks, and
-// points at the source of truth rather than the generated overlay.
+// URLs, absolute paths and in-page anchors are left alone.
 func AbsolutizeAgentsMDLinks(content, agentsRepoRoot string) string {
-	return agentsRelativeLinkRegexp.ReplaceAllString(
-		content,
-		"]("+agentsRepoRoot+string(filepath.Separator),
-	)
+	return markdownLinkTargetRegexp.ReplaceAllStringFunc(content, func(match string) string {
+		target := match[2 : len(match)-1]
+		if strings.Contains(target, "://") || strings.HasPrefix(target, "/") ||
+			strings.HasPrefix(target, "#") || strings.HasPrefix(target, "mailto:") {
+			return match
+		}
+		return "](" + resolveAgentsLinkTarget(target, agentsRepoRoot) + ")"
+	})
+}
+
+// resolveAgentsLinkTarget returns the absolute path a link target
+// relative to agentsRepoRoot refers to, avoiding a symlinked
+// `.agents/<bucket>` overlay where the bucket resolves inside the repo.
+func resolveAgentsLinkTarget(target, agentsRepoRoot string) string {
+	clean := strings.TrimPrefix(target, "./")
+	if rest, ok := strings.CutPrefix(clean, ".agents/"); ok {
+		bucket, tail, _ := strings.Cut(rest, "/")
+		overlay := filepath.Join(agentsRepoRoot, ".agents", bucket)
+		if info, err := os.Lstat(overlay); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			if prefix := BucketLinkPrefix(agentsRepoRoot, filepath.Join(agentsRepoRoot, ".agents"), bucket); !strings.HasPrefix(prefix, ".agents/") {
+				return filepath.Join(agentsRepoRoot, filepath.FromSlash(prefix), filepath.FromSlash(tail))
+			}
+		}
+	}
+	return filepath.Join(agentsRepoRoot, filepath.FromSlash(clean))
 }
 
 // BuildAgentsMDBlock renders the managed AGENTS.md mirror block.

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,20 +72,36 @@ func TestResolveGlobalAgentsMDPath_EmptyWhenAbsent(t *testing.T) {
 // symlink overlay. Both resolve to the same file, but readers that
 // decline to follow symlinks (VS Code with search.followSymlinks off)
 // report the `.agents/` form as missing and offer to create it.
-func TestAbsolutizeAgentsMDLinks(t *testing.T) {
-	in := "- [adr-required](.agents/rules/adr-required.md)\n- [plan](.agents/skills/plan/SKILL.md)\n"
-	out := AbsolutizeAgentsMDLinks(in, "/repo")
-
-	if strings.Contains(out, "](.agents/") {
-		t.Errorf("relative link survived absolutization:\n%s", out)
+// TestAbsolutizeAgentsMDLinks_RealAgentsDirKeepsSegment: when the
+// buckets are real `.agents/<bucket>` directories (the normal project
+// layout), the absolute link keeps the `.agents/` segment, because that
+// is where the file lives; dropping it would point at a missing file.
+func TestAbsolutizeAgentsMDLinks_RealAgentsDirKeepsSegment(t *testing.T) {
+	repoRoot, _ := seedAgentsRepo(t, "# AGENTS\n")
+	rule := filepath.Join(repoRoot, ".agents", "rules", "adr-required.md")
+	if err := os.WriteFile(rule, []byte("# adr-required\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	for _, want := range []string{"](/repo/rules/adr-required.md)", "](/repo/skills/plan/SKILL.md)"} {
+
+	out := AbsolutizeAgentsMDLinks("- [adr-required](.agents/rules/adr-required.md)\n", repoRoot)
+
+	if want := "](" + rule + ")"; !strings.Contains(out, want) {
+		t.Errorf("want %q in:\n%s", want, out)
+	}
+}
+
+// TestAbsolutizeAgentsMDLinks_BucketRelativeLinks: an index generated
+// in a repo whose `.agents/<bucket>` are symlinks links `<bucket>/...`
+// (BucketLinkPrefix). Those links are relative to the repo too and must
+// be absolutized, or in ~/.claude/CLAUDE.md they resolve under
+// ~/.claude/.
+func TestAbsolutizeAgentsMDLinks_BucketRelativeLinks(t *testing.T) {
+	in := "- [release](workflows/release.md)\n- [plan](skills/plan/SKILL.md)\n"
+	out := AbsolutizeAgentsMDLinks(in, "/repo")
+	for _, want := range []string{"](/repo/workflows/release.md)", "](/repo/skills/plan/SKILL.md)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
-	}
-	if strings.Contains(out, "/repo/.agents/") {
-		t.Errorf("link still routes through the .agents symlink overlay:\n%s", out)
 	}
 }
 
@@ -125,10 +142,15 @@ func TestAbsolutizeAgentsMDLinks_RewrittenPathReachesTheSameFile(t *testing.T) {
 	}
 }
 
-func TestAbsolutizeAgentsMDLinks_LeavesOtherLinksAlone(t *testing.T) {
-	in := "[docs](https://example.com/.agents/x.md) and [rel](./notes.md)\n"
+// URLs, absolute paths and anchors are not repo-relative and are left
+// alone; a `./` relative link is relative to AGENTS.md like any other.
+func TestAbsolutizeAgentsMDLinks_LeavesNonRelativeLinksAlone(t *testing.T) {
+	in := "[docs](https://example.com/.agents/x.md) [abs](/etc/notes.md) [top](#rules)\n"
 	if got := AbsolutizeAgentsMDLinks(in, "/repo"); got != in {
-		t.Errorf("non-repo-relative links were rewritten:\ngot:  %s\nwant: %s", got, in)
+		t.Errorf("non-relative links were rewritten:\ngot:  %s\nwant: %s", got, in)
+	}
+	if got := AbsolutizeAgentsMDLinks("[rel](./notes.md)", "/repo"); got != "[rel](/repo/notes.md)" {
+		t.Errorf("relative link: got %q", got)
 	}
 }
 
@@ -360,5 +382,67 @@ func TestRegenerateAgentsMDBlock_UnreadableClaudeMDIsNotOverwritten(t *testing.T
 	}
 	if data, _ := os.ReadFile(claudeMD); string(data) != "my own instructions\n" {
 		t.Errorf("CLAUDE.md content was replaced: %q", data)
+	}
+}
+
+// TestGenerateThenMirror_LinksResolveInBothLayouts: index a repo, mirror
+// its AGENTS.md, and check that every link in the mirrored block names
+// a file that exists. Covered for both supported layouts: real
+// `.agents/<bucket>` directories, and the agents-repo layout where
+// `.agents/<bucket>` symlinks to a visible `<bucket>/` directory.
+func TestGenerateThenMirror_LinksResolveInBothLayouts(t *testing.T) {
+	for _, layout := range []string{"real .agents dirs", "symlinked .agents overlay"} {
+		t.Run(layout, func(t *testing.T) {
+			root := t.TempDir()
+			agentsDir := filepath.Join(root, ".agents")
+			for _, bucket := range []string{"rules", "workflows"} {
+				dir := filepath.Join(agentsDir, bucket)
+				if layout == "symlinked .agents overlay" {
+					dir = filepath.Join(root, bucket)
+				}
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if layout == "symlinked .agents overlay" {
+					if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Symlink(filepath.Join("..", bucket), filepath.Join(agentsDir, bucket)); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			ruleDir, wfDir := filepath.Join(agentsDir, "rules"), filepath.Join(agentsDir, "workflows")
+			if err := os.WriteFile(filepath.Join(ruleDir, "security.md"), []byte("# security\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(wfDir, "release.md"), []byte("# release\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			a := &App{ProjectRoot: root, GlobalRoot: agentsDir, ActiveTargets: []string{"claude"}, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}}
+			if err := a.CmdIndex(); err != nil {
+				t.Fatalf("CmdIndex: %v", err)
+			}
+			agentsMD, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			block := BuildAgentsMDBlock(string(agentsMD), root)
+
+			targets := markdownLinkTargetRegexp.FindAllStringSubmatch(block, -1)
+			if len(targets) < 2 {
+				t.Fatalf("expected the rule and workflow links in the mirror, got %d:\n%s", len(targets), block)
+			}
+			for _, m := range targets {
+				if !filepath.IsAbs(m[1]) {
+					t.Errorf("link not absolute: %s", m[1])
+					continue
+				}
+				if _, err := os.Stat(m[1]); err != nil {
+					t.Errorf("mirrored link does not resolve: %s (%v)", m[1], err)
+				}
+			}
+		})
 	}
 }
