@@ -131,7 +131,7 @@ func (a *App) CmdGlobalSync(opts GlobalSyncOpts) error {
 						Semantic: sem,
 					})
 				}
-				if err := a.applySymlinkDestination(tool.ID, art, dest); err != nil {
+				if err := a.applySymlinkDestination(tool.ID, dest); err != nil {
 					a.Warn(fmt.Sprintf("[%s] %s %q: %v", tool.ID, art.Type, art.Name, err))
 				}
 
@@ -287,23 +287,26 @@ func (a *App) resolveSyncTools(targets []string) ([]Tool, error) {
 }
 
 // applySymlinkDestination creates or repairs the symlink at dest.Path
-// pointing at the artifact's content source. Handles three cases:
+// pointing at dest.Target. Handles four cases:
 //
 //   - Nothing at dest: create the symlink (after ensuring its parent
 //     dir exists).
 //   - Symlink already at dest: if it points at the right target,
 //     no-op (logged once at a higher level for brevity). Otherwise
 //     replace.
-//   - Non-symlink at dest: skip with warning unless App.Force is
-//     set, in which case the existing file is renamed to a
-//     `.replaced-by-sync-agents-<timestamp>` sibling and the symlink
-//     is placed.
+//   - A legacy Claude skill dir at dest (see isLegacyClaudeSkillDir):
+//     remove its one SKILL.md link and the then-empty dir, and place
+//     the directory link. Nothing but a link sync-agents created is
+//     removed, and nothing is followed into the skill's source.
+//   - Any other non-symlink at dest: skip with warning unless
+//     App.Force is set, in which case the existing file is renamed to
+//     a `.replaced-by-sync-agents` sibling and the symlink is placed.
 //
 // Symlinks are absolute paths (SPEC-002 §Global sync — symlink
 // semantics). Relative would be brittle because the global tree's
 // per-tool dirs are at different depths from ~/.agents/.
-func (a *App) applySymlinkDestination(toolID string, art Artifact, dest Destination) error {
-	target := symlinkTarget(art)
+func (a *App) applySymlinkDestination(toolID string, dest Destination) error {
+	target := dest.Target
 
 	if a.DryRun {
 		a.Info(fmt.Sprintf("[dry-run] [%s] would link %s -> %s", toolID, dest.Path, target))
@@ -324,6 +327,14 @@ func (a *App) applySymlinkDestination(toolID string, art Artifact, dest Destinat
 				return err
 			}
 			a.Info(fmt.Sprintf("[%s] repair: %s now -> %s", toolID, dest.Path, target))
+		} else if isLegacyClaudeSkillDir(dest.Path, target) {
+			if err := os.Remove(filepath.Join(dest.Path, "SKILL.md")); err != nil {
+				return err
+			}
+			if err := os.Remove(dest.Path); err != nil {
+				return err
+			}
+			a.Info(fmt.Sprintf("[%s] migrate: %s now links the whole skill directory %s", toolID, dest.Path, target))
 		} else {
 			// Non-symlink in the way. Without --force, refuse.
 			if !a.Force {
@@ -350,26 +361,32 @@ func (a *App) applySymlinkDestination(toolID string, art Artifact, dest Destinat
 	return nil
 }
 
-// symlinkTarget returns the path a tool's per-artifact symlink
-// should point at. For rules and workflows this is the .md file
-// itself; for skills it's the SKILL.md inside the source dir,
-// because Claude reads ~/.claude/skills/<name>/SKILL.md as the
-// metadata file even when the destination is structured as a dir.
-//
-// We do NOT include the skill's supporting files in the symlink
-// chain — they remain under ~/.agents/skills/<name>/ and are not
-// directly referenced by per-tool dirs. Tools that need them have
-// to walk the symlink target's parent dir, which is fine.
-func symlinkTarget(art Artifact) string {
-	if art.Type == ArtifactSkill {
-		return filepath.Join(art.SourcePath, "SKILL.md")
+// isLegacyClaudeSkillDir reports whether path is the Claude skill
+// layout earlier versions of global sync produced: a real directory
+// whose only entry is a SKILL.md symlink to the SKILL.md inside
+// skillDir. Such a directory holds nothing but a link sync-agents
+// made, so replacing it with a link to skillDir loses nothing. Any
+// other content means the directory is not sync-agents' to replace.
+func isLegacyClaudeSkillDir(path, skillDir string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || !info.IsDir() {
+		return false
 	}
-	return art.SourcePath
+	entries, err := os.ReadDir(path)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "SKILL.md" {
+		return false
+	}
+	link := filepath.Join(path, "SKILL.md")
+	linkInfo, err := os.Lstat(link)
+	if err != nil || linkInfo.Mode()&os.ModeSymlink == 0 {
+		return false
+	}
+	current, err := os.Readlink(link)
+	return err == nil && current == filepath.Join(skillDir, "SKILL.md")
 }
 
 // concatSourcePath returns the path RegenerateConcat should read for
-// this artifact's body. Same shape as symlinkTarget — the skill's
-// content is in SKILL.md.
+// this artifact's body. For skills, the content is in SKILL.md.
 func concatSourcePath(art Artifact) string {
 	if art.Type == ArtifactSkill {
 		return filepath.Join(art.SourcePath, "SKILL.md")

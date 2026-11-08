@@ -133,7 +133,7 @@ func TestCmdGlobalSync_PassiveRuleFanout(t *testing.T) {
 // routing flagship test. A single-file invocable skill must land at
 // the right per-tool destination for each tool:
 //
-//   - claude:   ~/.claude/skills/cool/SKILL.md (symlink)
+//   - claude:   ~/.claude/skills/cool (symlink to the skill dir)
 //   - codeium:  ~/.codeium/windsurf/global_workflows/cool.md (symlink)
 //   - cursor:   ~/.cursor/rules/cool.md (symlink)
 //   - copilot:  concat into instructions.md
@@ -151,7 +151,7 @@ func TestCmdGlobalSync_InvocableSkillRoutesPerTool(t *testing.T) {
 		isSymlink  bool
 		concatNeed string
 	}{
-		{filepath.Join(root, ".claude", "skills", "cool", "SKILL.md"), true, ""},
+		{filepath.Join(root, ".claude", "skills", "cool"), true, ""},
 		{filepath.Join(root, ".codeium", "windsurf", "global_workflows", "cool.md"), true, ""},
 		{filepath.Join(root, ".cursor", "rules", "cool.md"), true, ""},
 		{filepath.Join(root, ".github", "copilot", "instructions.md"), false, "## cool"},
@@ -219,9 +219,112 @@ func TestCmdGlobalSync_MultiFileSkillSkipsCodeium(t *testing.T) {
 	}
 
 	// Claude destination should still exist.
-	claudeDest := filepath.Join(root, ".claude", "skills", "big", "SKILL.md")
+	claudeDest := filepath.Join(root, ".claude", "skills", "big")
 	if _, err := os.Lstat(claudeDest); err != nil {
 		t.Errorf("Claude destination missing despite multi-file skip being codeium-only: %v", err)
+	}
+}
+
+// TestCmdGlobalSync_ClaudeSkillCarriesSupportingFiles is the reason
+// Claude links the skill directory: a skill's supporting files (a
+// script, a template) must be readable next to its SKILL.md under
+// ~/.claude/skills/<name>/.
+func TestCmdGlobalSync_ClaudeSkillCarriesSupportingFiles(t *testing.T) {
+	a, root, _ := newGlobalSyncTestApp(t)
+	seedSkill(t, a.ResolveGlobalRoot(), "deploy-script", "# deploy-script\n", map[string]string{
+		"deploy-lib.sh": "#!/usr/bin/env bash\nmain() { :; }\n",
+	})
+
+	if err := a.CmdGlobalSync(GlobalSyncOpts{Targets: []string{"claude"}}); err != nil {
+		t.Fatalf("CmdGlobalSync: %v", err)
+	}
+
+	link := filepath.Join(root, ".claude", "skills", "deploy-script")
+	info, err := os.Lstat(link)
+	if err != nil {
+		t.Fatalf("expected a link at %s: %v", link, err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("%s is not a symlink", link)
+	}
+	if got, _ := os.Readlink(link); got != filepath.Join(a.ResolveGlobalRoot(), "skills", "deploy-script") {
+		t.Errorf("link points at %q, want the skill directory", got)
+	}
+	for _, f := range []string{"SKILL.md", "deploy-lib.sh"} {
+		if _, err := os.Stat(filepath.Join(link, f)); err != nil {
+			t.Errorf("%s is not reachable through the skill link: %v", f, err)
+		}
+	}
+}
+
+// TestCmdGlobalSync_MigratesLegacyClaudeSkillDir covers the layout
+// earlier versions produced: a real ~/.claude/skills/<name>/ dir
+// holding only a SKILL.md symlink back to the skill. Sync replaces it
+// with the directory link, and the skill's source is untouched.
+func TestCmdGlobalSync_MigratesLegacyClaudeSkillDir(t *testing.T) {
+	a, root, _ := newGlobalSyncTestApp(t)
+	seedSkill(t, a.ResolveGlobalRoot(), "big", "# big skill\n", map[string]string{"helper.txt": "support"})
+	source := filepath.Join(a.ResolveGlobalRoot(), "skills", "big")
+	legacy := filepath.Join(root, ".claude", "skills", "big")
+	if err := os.MkdirAll(legacy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(source, "SKILL.md"), filepath.Join(legacy, "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.CmdGlobalSync(GlobalSyncOpts{Targets: []string{"claude"}}); err != nil {
+		t.Fatalf("CmdGlobalSync: %v", err)
+	}
+
+	info, err := os.Lstat(legacy)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("legacy dir was not replaced by a link: info=%v err=%v", info, err)
+	}
+	if got, _ := os.Readlink(legacy); got != source {
+		t.Errorf("link points at %q, want %q", got, source)
+	}
+	for _, f := range []string{"SKILL.md", "helper.txt"} {
+		if _, err := os.Stat(filepath.Join(source, f)); err != nil {
+			t.Errorf("skill source file %s was lost: %v", f, err)
+		}
+	}
+}
+
+// TestCmdGlobalSync_LeavesUserContentInClaudeSkillDir: a real
+// ~/.claude/skills/<name>/ dir holding anything other than the
+// legacy SKILL.md link is not sync-agents' to replace. Without
+// --force it is left exactly as it was.
+func TestCmdGlobalSync_LeavesUserContentInClaudeSkillDir(t *testing.T) {
+	a, root, _ := newGlobalSyncTestApp(t)
+	seedSkill(t, a.ResolveGlobalRoot(), "big", "# big skill\n", nil)
+	dir := filepath.Join(root, ".claude", "skills", "big")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(a.ResolveGlobalRoot(), "skills", "big", "SKILL.md"), filepath.Join(dir, "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+	notes := filepath.Join(dir, "notes.md")
+	if err := os.WriteFile(notes, []byte("my notes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.CmdGlobalSync(GlobalSyncOpts{Targets: []string{"claude"}}); err != nil {
+		t.Fatalf("CmdGlobalSync: %v", err)
+	}
+
+	info, err := os.Lstat(dir)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("user dir was replaced: info=%v err=%v", info, err)
+	}
+	if data, err := os.ReadFile(notes); err != nil || string(data) != "my notes" {
+		t.Errorf("user file changed or lost: %q %v", data, err)
+	}
+	// Nothing inside the dir is touched either, including the
+	// SKILL.md link that sits next to the user's file.
+	if got, err := os.Readlink(filepath.Join(dir, "SKILL.md")); err != nil || got != filepath.Join(a.ResolveGlobalRoot(), "skills", "big", "SKILL.md") {
+		t.Errorf("SKILL.md link inside the user dir changed or removed: %q %v", got, err)
 	}
 }
 

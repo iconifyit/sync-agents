@@ -54,6 +54,12 @@ type Destination struct {
 	//   - StrategySkip: empty.
 	Path string
 
+	// Target is what the symlink at Path points at. Set only when
+	// Strategy == StrategySymlink: the artifact file for rules,
+	// workflows and other single-file artifacts; for skills, the skill
+	// directory (Claude) or the SKILL.md inside it (other tools).
+	Target string
+
 	// SkipReason is set only when Strategy == StrategySkip. Used by
 	// the orchestration layer to print a per-skip warning.
 	SkipReason string
@@ -86,6 +92,43 @@ type Destination struct {
 // docs/architecture/semantic-routing.md for the routing rules this
 // implements.
 func TargetDestination(
+	tool Tool,
+	typ ArtifactType,
+	name string,
+	sem Semantic,
+	artifactSourcePath string,
+	globalRootParent string,
+) Destination {
+	dest := routeDestination(tool, typ, name, sem, artifactSourcePath, globalRootParent)
+	if dest.Strategy == StrategySymlink {
+		dest.Target = symlinkTargetFor(tool.ID, typ, artifactSourcePath)
+	}
+	return dest
+}
+
+// symlinkTargetFor returns what a tool's per-artifact symlink points
+// at.
+//
+// Claude links a skill's whole directory: Claude reads a skill from
+// ~/.claude/skills/<name>/, so the skill's supporting files (scripts,
+// templates, references) are only reachable when that path is the
+// skill directory itself. The other symlink tools take a single
+// markdown file per artifact, so they link the skill's SKILL.md.
+// Rules, workflows and the other single-file artifacts link the file.
+func symlinkTargetFor(toolID string, typ ArtifactType, artifactSourcePath string) string {
+	if typ != ArtifactSkill {
+		return artifactSourcePath
+	}
+	if toolID == "claude" {
+		return artifactSourcePath
+	}
+	return filepath.Join(artifactSourcePath, "SKILL.md")
+}
+
+// routeDestination resolves the destination path and strategy for
+// one (tool, artifact) pair; TargetDestination adds the symlink
+// target.
+func routeDestination(
 	tool Tool,
 	typ ArtifactType,
 	name string,
@@ -163,7 +206,7 @@ func TargetDestination(
 
 // claudeDestination implements the Claude row of the routing table:
 //
-//   - Invocable skill (dir): ~/.claude/skills/<name>/SKILL.md
+//   - Invocable skill (dir): ~/.claude/skills/<name> (a link to the skill directory)
 //   - Invocable rule/workflow (single file): ~/.claude/commands/<name>.md
 //   - Passive (any bucket): ~/.claude/rules/<name>.md (single file)
 //
@@ -180,7 +223,7 @@ func claudeDestination(typ ArtifactType, name string, sem Semantic, parent strin
 		if typ == ArtifactSkill {
 			return Destination{
 				Strategy: StrategySymlink,
-				Path:     filepath.Join(claudeDir, "skills", name, "SKILL.md"),
+				Path:     filepath.Join(claudeDir, "skills", name),
 			}
 		}
 		// Single-file invocable (rule or workflow marked

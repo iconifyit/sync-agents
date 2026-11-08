@@ -34,11 +34,15 @@ every registered tool, the sync:
 
 | Tool | Invocable destination | Passive destination |
 |---|---|---|
-| `claude` | `~/.claude/skills/<name>/SKILL.md` (skill) or `~/.claude/commands/<name>.md` (rule/workflow) | `~/.claude/rules/<name>.md` |
+| `claude` | `~/.claude/skills/<name>` → the skill directory (skill) or `~/.claude/commands/<name>.md` (rule/workflow) | `~/.claude/rules/<name>.md` |
 | `codeium` | `~/.codeium/windsurf/global_workflows/<name>.md` (single-file only) | concat → `~/.codeium/windsurf/memories/global_rules.md` |
 | `cursor` | `~/.cursor/rules/<name>.md` | `~/.cursor/rules/<name>.md` (same — Cursor doesn't distinguish) |
 | `copilot` | concat → `~/.github/copilot/instructions.md` | same concat |
 | `codex` | concat → `~/.codex/instructions.md` | same concat |
+
+Claude links a skill's whole directory, not just its `SKILL.md`. Claude reads a skill from `~/.claude/skills/<name>/`, so the skill's supporting files (scripts, templates, references) are reachable only when that path is the skill directory itself. The other symlink tools take one markdown file per artifact and link the skill's `SKILL.md`.
+
+A real `~/.claude/skills/<name>/` directory whose only entry is a `SKILL.md` link to the skill (the layout earlier versions produced) is replaced by the directory link on the next sync. A directory holding anything else is left untouched and reported, like any other non-symlink in the way; `--force` moves it aside.
 
 Skipped cases:
 

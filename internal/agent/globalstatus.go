@@ -196,7 +196,7 @@ func computeStatus(artifacts []Artifact, tools []Tool, parent string) (perDestin
 					Detail:       dest.SkipReason,
 				})
 			case StrategySymlink:
-				state, detail := classifySymlinkDestination(dest.Path, symlinkTarget(art))
+				state, detail := classifySymlinkDestination(dest.Path, dest.Target)
 				perDestination = append(perDestination, StatusEntry{
 					Tool:            tool.ID,
 					ArtifactType:    art.Type,
@@ -260,6 +260,9 @@ func classifySymlinkDestination(destPath, wantTarget string) (DestinationState, 
 		return StateNotSymlink, err.Error()
 	}
 	if info.Mode()&os.ModeSymlink == 0 {
+		if isLegacyClaudeSkillDir(destPath, wantTarget) {
+			return StateDrifted, "legacy skill dir linking only SKILL.md; sync replaces it with a link to the skill directory"
+		}
 		return StateNotSymlink, ""
 	}
 	current, err := os.Readlink(destPath)

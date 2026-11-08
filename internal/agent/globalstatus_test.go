@@ -248,3 +248,52 @@ func TestCmdGlobalStatus_TargetsFilter(t *testing.T) {
 		}
 	}
 }
+
+// TestCmdGlobalStatus_ClaudeSkillLinkStates: after sync the Claude
+// skill directory link reports [synced]; a legacy skill dir holding
+// only a SKILL.md link reports [drifted], since the next sync
+// replaces it.
+func TestCmdGlobalStatus_ClaudeSkillLinkStates(t *testing.T) {
+	a, root, stdout := newStatusTestApp(t)
+	seedSkill(t, a.ResolveGlobalRoot(), "deploy-script", "# deploy-script\n", map[string]string{"deploy-lib.sh": "main\n"})
+
+	if err := a.CmdGlobalSync(GlobalSyncOpts{Targets: []string{"claude"}}); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	stdout.Reset()
+	if err := a.CmdGlobalStatus(GlobalStatusOpts{Targets: []string{"claude"}}); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if line := statusLineFor(stdout.String(), "deploy-script"); !strings.Contains(line, "[synced]") {
+		t.Errorf("skill link after sync: want [synced], got %q\n%s", line, stdout.String())
+	}
+
+	// Replace the link with the legacy layout.
+	link := filepath.Join(root, ".claude", "skills", "deploy-script")
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(link, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(a.ResolveGlobalRoot(), "skills", "deploy-script", "SKILL.md"), filepath.Join(link, "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	if err := a.CmdGlobalStatus(GlobalStatusOpts{Targets: []string{"claude"}}); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if line := statusLineFor(stdout.String(), "deploy-script"); !strings.Contains(line, "[drifted]") {
+		t.Errorf("legacy skill dir: want [drifted], got %q\n%s", line, stdout.String())
+	}
+}
+
+// statusLineFor returns the first status output line naming the artifact.
+func statusLineFor(out, name string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, name) {
+			return line
+		}
+	}
+	return ""
+}

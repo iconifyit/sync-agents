@@ -19,16 +19,32 @@ func asTool(t *testing.T, id string) Tool {
 }
 
 // TestTargetDestination_ClaudeInvocableSkill exercises the most
-// common Claude case: an invocable skill dir lands at
-// claude/skills/<name>/SKILL.md.
+// common Claude case: an invocable skill lands at
+// claude/skills/<name> as a link to the whole skill directory, so
+// the skill's supporting files are reachable next to its SKILL.md.
 func TestTargetDestination_ClaudeInvocableSkill(t *testing.T) {
-	d := TargetDestination(asTool(t, "claude"), ArtifactSkill, "cool", Invocable, "", "/home/u")
+	source := filepath.Join("/home/u", ".agents", "skills", "cool")
+	d := TargetDestination(asTool(t, "claude"), ArtifactSkill, "cool", Invocable, source, "/home/u")
 	if d.Strategy != StrategySymlink {
 		t.Errorf("strategy = %v, want StrategySymlink", d.Strategy)
 	}
-	want := filepath.Join("/home/u", ".claude", "skills", "cool", "SKILL.md")
+	want := filepath.Join("/home/u", ".claude", "skills", "cool")
 	if d.Path != want {
 		t.Errorf("path = %q, want %q", d.Path, want)
+	}
+	if d.Target != source {
+		t.Errorf("target = %q, want the skill directory %q", d.Target, source)
+	}
+}
+
+// TestTargetDestination_NonClaudeSkillTargetsSkillFile pins that only
+// Claude links the skill directory; the other symlink tools still
+// link the single SKILL.md file their layouts expect.
+func TestTargetDestination_NonClaudeSkillTargetsSkillFile(t *testing.T) {
+	source := filepath.Join("/home/u", ".agents", "skills", "cool")
+	d := TargetDestination(asTool(t, "cursor"), ArtifactSkill, "cool", Invocable, source, "/home/u")
+	if want := filepath.Join(source, "SKILL.md"); d.Target != want {
+		t.Errorf("cursor target = %q, want %q", d.Target, want)
 	}
 }
 

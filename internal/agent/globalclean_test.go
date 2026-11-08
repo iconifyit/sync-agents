@@ -288,3 +288,27 @@ func TestCmdGlobalClean_NoGlobalRootErrors(t *testing.T) {
 		t.Fatal("expected error for missing global root; got nil")
 	}
 }
+
+// TestCmdGlobalClean_RemovesClaudeSkillLinkOnly: clean removes the
+// Claude skill directory link without following it, so the skill's
+// source files under ~/.agents are untouched.
+func TestCmdGlobalClean_RemovesClaudeSkillLinkOnly(t *testing.T) {
+	a, root, _ := newCleanTestApp(t)
+	seedSkill(t, a.ResolveGlobalRoot(), "deploy-script", "# deploy-script\n", map[string]string{"deploy-lib.sh": "main\n"})
+	if err := a.CmdGlobalSync(GlobalSyncOpts{Targets: []string{"claude"}}); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	if err := a.CmdGlobalClean(GlobalCleanOpts{Targets: []string{"claude"}}); err != nil {
+		t.Fatalf("clean: %v", err)
+	}
+
+	if _, err := os.Lstat(filepath.Join(root, ".claude", "skills", "deploy-script")); !os.IsNotExist(err) {
+		t.Errorf("skill link still present after clean: %v", err)
+	}
+	for _, f := range []string{"SKILL.md", "deploy-lib.sh"} {
+		if _, err := os.Stat(filepath.Join(a.ResolveGlobalRoot(), "skills", "deploy-script", f)); err != nil {
+			t.Errorf("clean removed skill source %s: %v", f, err)
+		}
+	}
+}

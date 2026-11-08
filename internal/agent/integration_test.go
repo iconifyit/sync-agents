@@ -174,17 +174,13 @@ func TestApplySymlinkDestination_Conflict(t *testing.T) {
 	// Pre-seed a regular file where the symlink should go.
 	os.WriteFile(filepath.Join(dir, ".claude", "rules", "test.md"), []byte("blocker"), 0o644)
 
-	art := Artifact{
-		Type:       ArtifactRule,
-		Name:       "test",
-		SourcePath: filepath.Join(dir, ".agents", "rules", "test.md"),
-	}
 	dest := Destination{
 		Strategy: StrategySymlink,
 		Path:     filepath.Join(dir, ".claude", "rules", "test.md"),
+		Target:   filepath.Join(dir, ".agents", "rules", "test.md"),
 	}
 
-	err := app.applySymlinkDestination("claude", art, dest)
+	err := app.applySymlinkDestination("claude", dest)
 	if err == nil {
 		t.Error("expected conflict error without --force")
 	}
@@ -200,17 +196,13 @@ func TestApplySymlinkDestination_Force(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, ".agents", "rules", "test.md"), []byte("content"), 0o644)
 	os.WriteFile(filepath.Join(dir, ".claude", "rules", "test.md"), []byte("blocker"), 0o644)
 
-	art := Artifact{
-		Type:       ArtifactRule,
-		Name:       "test",
-		SourcePath: filepath.Join(dir, ".agents", "rules", "test.md"),
-	}
 	dest := Destination{
 		Strategy: StrategySymlink,
 		Path:     filepath.Join(dir, ".claude", "rules", "test.md"),
+		Target:   filepath.Join(dir, ".agents", "rules", "test.md"),
 	}
 
-	if err := app.applySymlinkDestination("claude", art, dest); err != nil {
+	if err := app.applySymlinkDestination("claude", dest); err != nil {
 		t.Fatal(err)
 	}
 
