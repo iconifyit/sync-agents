@@ -213,7 +213,6 @@ func TestApplySymlinkDestination_Force(t *testing.T) {
 	}
 }
 
-
 func TestScrubClaudeManagedBlock_OnlyBlock(t *testing.T) {
 	dir := t.TempDir()
 	var buf bytes.Buffer
@@ -353,7 +352,6 @@ func TestCmdInheritList(t *testing.T) {
 		t.Fatal(err)
 	}
 }
-
 
 func TestCopyFile_Basic(t *testing.T) {
 	dir := t.TempDir()

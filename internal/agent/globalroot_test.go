@@ -119,7 +119,7 @@ func TestResolveToolDir_EmptyWhenNoMapping(t *testing.T) {
 	// Synthesize a LocalOnly tool inline; we don't put it in the
 	// registry because that would change the public surface.
 	tool := Tool{
-		ID:        "synthetic",
+		ID:         "synthetic",
 		DirByScope: map[Scope]string{ScopeLocal: ".synthetic"},
 		LocalOnly:  true,
 	}

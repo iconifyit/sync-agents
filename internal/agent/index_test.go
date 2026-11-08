@@ -310,9 +310,9 @@ func TestListMDFilesRecursive_Nested(t *testing.T) {
 		t.Errorf("expected 3 files, got %d: %v", len(names), names)
 	}
 	want := map[string]bool{
-		"plan":                 true,
-		"effort-a/rollout":     true,
-		"effort-b/testing":     true,
+		"plan":             true,
+		"effort-a/rollout": true,
+		"effort-b/testing": true,
 	}
 	for _, n := range names {
 		if !want[n] {
