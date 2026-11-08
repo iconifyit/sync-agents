@@ -49,7 +49,7 @@ A missing `AGENTS.md` returns `""` and the mirror is skipped. Opt-in, absence is
 
 ### Absolutizing links
 
-`AGENTS.md` indexes artifacts as `](.agents/rules/x.md)`, correct relative to the agents repo. Mirrored verbatim into `~/.claude/CLAUDE.md` those resolve to `~/.claude/.agents/rules/x.md` and dangle. `AbsolutizeAgentsMDLinks` rewrites the `](.agents/` prefix to the absolute repo path. Only that prefix is touched — external URLs and other relative links are left alone.
+`AGENTS.md` links its artifacts relative to its own directory: as `](.agents/<bucket>/x.md)` when the bucket is a real directory, or as `](<bucket>/x.md)` when `.agents/<bucket>` is a symlink back into the repo (`BucketLinkPrefix`). Mirrored verbatim into `~/.claude/CLAUDE.md`, either form resolves under `~/.claude/` and dangles. `AbsolutizeAgentsMDLinks` joins every relative link target to the absolute repo path. A `.agents/<bucket>` segment is resolved to the real directory when the bucket is a symlink inside the repo, so the link works without following a symlink, and kept when the bucket is a real directory. External URLs, absolute paths and anchors are left alone.
 
 ## Requirements
 
@@ -76,9 +76,9 @@ A missing `AGENTS.md` returns `""` and the mirror is skipped. Opt-in, absence is
 - **THEN** the second run reports no change and the bytes are identical
 
 #### Scenario: Links resolve
-- **GIVEN** `AGENTS.md` contains `](.agents/rules/x.md)`
+- **GIVEN** `AGENTS.md` contains relative artifact links, in either bucket layout (`](.agents/rules/x.md)` for real `.agents/` directories, `](workflows/x.md)` for symlinked ones)
 - **WHEN** the mirror runs
-- **THEN** the mirrored link is absolute and no `](.agents/` remains
+- **THEN** every mirrored link is absolute and names a file that exists
 
 #### Scenario: No AGENTS.md is not an error
 - **GIVEN** the global tree has no `AGENTS.md`

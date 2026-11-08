@@ -39,6 +39,7 @@ errs on the side of preservation, sync errs on the side of detection.
   `~/.codeium/windsurf/memories/global_rules.md`,
   `~/.github/copilot/instructions.md`, `~/.codex/instructions.md`,
   and any future banner-bearing concat targets.
+- **Managed regions in `~/.claude/CLAUDE.md`**: the rule `@`-import block and the `AGENTS.md` mirror block, every occurrence of each. Text outside their markers is kept; the file is removed only when nothing else remains.
 - **Empty directories** left behind after the removals: the
   per-subdir parents (`rules/`, `skills/`, `commands/`,
   `global_workflows/`, `memories/`) get rmdir'd if they end up
@@ -51,6 +52,7 @@ errs on the side of preservation, sync errs on the side of detection.
   read-only with respect to the canonical tree.
 - User-curated symlinks (target outside `~/.agents/`).
 - User-written files at concat destinations (no banner).
+- Text in `~/.claude/CLAUDE.md` outside the sync-agents markers.
 - Directories that still contain user-owned content after the
   removal pass.
 
