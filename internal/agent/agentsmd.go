@@ -151,6 +151,12 @@ func RegenerateAgentsMDBlock(claudeMDPath, agentsMDPath string) (bool, error) {
 	existing, readErr := os.ReadFile(claudeMDPath)
 	var out string
 	if readErr != nil {
+		// Only a missing file is started fresh. Any other read error
+		// (permissions, an I/O failure) leaves the file alone: writing
+		// would replace content outside the markers that was never read.
+		if !os.IsNotExist(readErr) {
+			return false, readErr
+		}
 		out = newBlock
 	} else {
 		out = replaceBlockBetweenMarkers(string(existing), newBlock, AgentsMDBlockStart, AgentsMDBlockEnd)

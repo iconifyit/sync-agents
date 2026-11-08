@@ -331,3 +331,34 @@ func TestBucketLinkPrefix_MissingBucketKeepsAgentsPrefix(t *testing.T) {
 		t.Errorf("BucketLinkPrefix() = %q, want %q", got, ".agents/workflows")
 	}
 }
+
+// TestRegenerateAgentsMDBlock_UnreadableClaudeMDIsNotOverwritten: a
+// CLAUDE.md that exists but cannot be read is not "absent". The mirror
+// returns the read error and leaves the file's user-authored content in
+// place instead of replacing it with only the managed block.
+func TestRegenerateAgentsMDBlock_UnreadableClaudeMDIsNotOverwritten(t *testing.T) {
+	dir := t.TempDir()
+	agentsMD := filepath.Join(dir, "AGENTS.md")
+	if err := os.WriteFile(agentsMD, []byte("# AGENTS\n\nprinciples\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	claudeMD := filepath.Join(dir, "CLAUDE.md")
+	if err := os.WriteFile(claudeMD, []byte("my own instructions\n"), 0o200); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(claudeMD, 0o644) })
+	if _, err := os.ReadFile(claudeMD); err == nil {
+		t.Skip("file is readable despite mode 0200 (running as root?)")
+	}
+
+	if _, err := RegenerateAgentsMDBlock(claudeMD, agentsMD); err == nil {
+		t.Error("expected the read error to be returned")
+	}
+
+	if err := os.Chmod(claudeMD, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(claudeMD); string(data) != "my own instructions\n" {
+		t.Errorf("CLAUDE.md content was replaced: %q", data)
+	}
+}
