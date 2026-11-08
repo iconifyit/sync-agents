@@ -151,6 +151,24 @@ func (a *App) CmdGlobalSync(opts GlobalSyncOpts) error {
 	// passive rules reach the filesystem but not the model.
 	if hasClaudeTarget && !a.DryRun {
 		claudeMDPath := filepath.Join(parent, ".claude", "CLAUDE.md")
+
+		// Mirror the global AGENTS.md — which already carries the
+		// injected AGENTS.preamble.md — into CLAUDE.md as its own
+		// managed block. Without this, preamble edits reach AGENTS.md
+		// but never the global CLAUDE.md, so every session outside the
+		// agents repo keeps loading stale principles.
+		agentsMDPath := ResolveGlobalAgentsMDPath(a.ResolveGlobalRoot())
+		if agentsMDPath != "" {
+			changed, err := RegenerateAgentsMDBlock(claudeMDPath, agentsMDPath)
+			if err != nil {
+				a.Warn(fmt.Sprintf("AGENTS.md mirror failed for %s: %v", claudeMDPath, err))
+			} else if changed {
+				a.Info(fmt.Sprintf("mirrored %s into %s", agentsMDPath, claudeMDPath))
+			} else {
+				a.Info(fmt.Sprintf("%s AGENTS.md mirror already current", claudeMDPath))
+			}
+		}
+
 		importPaths := CollectClaudeRuleImportPaths(parent, claudeRouted)
 		if len(importPaths) > 0 {
 			changed, err := RegenerateClaudeImports(claudeMDPath, importPaths)
@@ -164,6 +182,9 @@ func (a *App) CmdGlobalSync(opts GlobalSyncOpts) error {
 		}
 	} else if hasClaudeTarget && a.DryRun {
 		claudeMDPath := filepath.Join(parent, ".claude", "CLAUDE.md")
+		if agentsMDPath := ResolveGlobalAgentsMDPath(a.ResolveGlobalRoot()); agentsMDPath != "" {
+			a.Info(fmt.Sprintf("[dry-run] would mirror %s into %s", agentsMDPath, claudeMDPath))
+		}
 		importPaths := CollectClaudeRuleImportPaths(parent, claudeRouted)
 		if len(importPaths) > 0 {
 			a.Info(fmt.Sprintf("[dry-run] would regenerate %s with %d @-imports", claudeMDPath, len(importPaths)))

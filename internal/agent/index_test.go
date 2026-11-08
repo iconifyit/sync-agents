@@ -35,51 +35,6 @@ func newLocalIndexTestApp(t *testing.T) (*App, string, *bytes.Buffer) {
 // @-import block listing each passive rule using project-relative
 // paths — the bridge that makes Claude actually load the rule
 // content (see issue #46).
-func TestCmdIndex_WritesClaudeImportsBlock(t *testing.T) {
-	a, root, _ := newLocalIndexTestApp(t)
-
-	// Seed two passive rules (no frontmatter — bucket default for
-	// rules is Passive).
-	for _, name := range []string{"security", "no-secrets"} {
-		if err := os.WriteFile(filepath.Join(root, ".agents", "rules", name+".md"), []byte("body\n"), 0o644); err != nil {
-			t.Fatalf("seed %s: %v", name, err)
-		}
-	}
-
-	if err := a.CmdIndex(); err != nil {
-		t.Fatalf("CmdIndex: %v", err)
-	}
-
-	agentsMD := filepath.Join(root, "AGENTS.md")
-	data, err := os.ReadFile(agentsMD)
-	if err != nil {
-		t.Fatalf("read AGENTS.md: %v", err)
-	}
-	s := string(data)
-
-	if !HasManagedImportBlock(s) {
-		t.Fatalf("managed block not written in AGENTS.md:\n%s", s)
-	}
-
-	imports := ExtractManagedImports(s)
-	want := map[string]bool{
-		".claude/rules/no-secrets.md": true,
-		".claude/rules/security.md":   true,
-	}
-	if len(imports) != len(want) {
-		t.Errorf("got %d imports %v, want %v", len(imports), imports, want)
-	}
-	for _, imp := range imports {
-		if !want[imp] {
-			t.Errorf("unexpected import %q", imp)
-		}
-		// Must be relative — no absolute paths in checked-in
-		// AGENTS.md so it ports across developers.
-		if filepath.IsAbs(imp) {
-			t.Errorf("import path should be relative: %q", imp)
-		}
-	}
-}
 
 // TestCmdIndex_EmptyAgentsTreeOmitsBlock verifies that a fresh
 // project with no rules/skills/workflows doesn't write an empty @-

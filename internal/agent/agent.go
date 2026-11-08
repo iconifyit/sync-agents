@@ -274,7 +274,9 @@ func (a *App) CmdInit() error {
 	// AGENTS.md
 	agentsMD := filepath.Join(a.ProjectRoot, "AGENTS.md")
 	if _, err := os.Stat(agentsMD); os.IsNotExist(err) {
-		a.generateAgentsMD()
+		if err := a.generateAgentsMD(); err != nil {
+			return err
+		}
 		a.Info("Created AGENTS.md")
 	} else {
 		a.Warn("AGENTS.md already exists, skipping (run 'sync-agents index' to regenerate)")
@@ -322,7 +324,9 @@ func (a *App) CmdAdd(typ, name string) error {
 	os.WriteFile(fpath, []byte(content), 0644)
 	a.Info(fmt.Sprintf("Created %s: %s", typ, fpath))
 
-	a.generateAgentsMD()
+	if err := a.generateAgentsMD(); err != nil {
+		return err
+	}
 	a.Info("Updated AGENTS.md index")
 	return nil
 }
@@ -475,7 +479,13 @@ func (a *App) CmdIndex() error {
 	if err := a.EnsureAgentsDir(); err != nil {
 		return err
 	}
-	a.generateAgentsMD()
+	if err := a.generateAgentsMD(); err != nil {
+		return err
+	}
+	if a.DryRun {
+		a.Info("Would regenerate AGENTS.md")
+		return nil
+	}
 	a.Info("Regenerated AGENTS.md")
 	return nil
 }
@@ -1211,7 +1221,7 @@ func (a *App) migrateLegacyState(agentsDir string) {
 	a.Info("Removed legacy .agents/STATE.md (replaced by rules/state.md pattern)")
 }
 
-func (a *App) generateAgentsMD() {
+func (a *App) generateAgentsMD() error {
 	outfile := filepath.Join(a.ProjectRoot, "AGENTS.md")
 	agentsDir := filepath.Join(a.ProjectRoot, ".agents")
 
@@ -1240,6 +1250,19 @@ func (a *App) generateAgentsMD() {
 	b.WriteString("> Run `sync-agents index` to regenerate.\n\n")
 	b.WriteString("This file indexes all rules, skills, and workflows defined in `.agents/`.\n\n")
 
+	// Hand-authored global content, injected verbatim between the
+	// header and the generated index sections. Absent by default —
+	// see preamble.go and SPEC-007.
+	if preamble, ok := a.ReadPreamble(); ok {
+		b.WriteString(PreambleMarker)
+		b.WriteString("\n\n")
+		b.WriteString(preamble)
+		b.WriteString("\n\n")
+		if a.DryRun {
+			fmt.Fprintf(a.Stdout, "  would inject preamble: %s\n", a.ResolvePreamblePath())
+		}
+	}
+
 	if inheritsBlock != "" {
 		// Trim captured trailing blank lines before re-adding the
 		// section separator — otherwise every regeneration appends
@@ -1254,7 +1277,7 @@ func (a *App) generateAgentsMD() {
 	ruleFiles := listMDFiles(rulesDir)
 	if len(ruleFiles) > 0 {
 		for _, name := range ruleFiles {
-			b.WriteString(indexEntry(name, ".agents/rules/"+name+".md", filepath.Join(rulesDir, name+".md")))
+			b.WriteString(indexEntry(name, BucketLinkPrefix(a.ProjectRoot, agentsDir, "rules")+"/"+name+".md", filepath.Join(rulesDir, name+".md")))
 		}
 	} else {
 		b.WriteString("_No rules defined yet. Add one with `sync-agents add rule <name>`._\n")
@@ -1273,7 +1296,7 @@ func (a *App) generateAgentsMD() {
 			name := entry.Name()
 			skillFile := filepath.Join(skillsDir, name, "SKILL.md")
 			if _, err := os.Stat(skillFile); err == nil {
-				b.WriteString(indexEntry(name, ".agents/skills/"+name+"/SKILL.md", skillFile))
+				b.WriteString(indexEntry(name, BucketLinkPrefix(a.ProjectRoot, agentsDir, "skills")+"/"+name+"/SKILL.md", skillFile))
 				hasSkills = true
 			}
 		}
@@ -1301,7 +1324,7 @@ func (a *App) generateAgentsMD() {
 	wfFiles := listMDFiles(workflowsDir)
 	if len(wfFiles) > 0 {
 		for _, name := range wfFiles {
-			b.WriteString(indexEntry(name, ".agents/workflows/"+name+".md", filepath.Join(workflowsDir, name+".md")))
+			b.WriteString(indexEntry(name, BucketLinkPrefix(a.ProjectRoot, agentsDir, "workflows")+"/"+name+".md", filepath.Join(workflowsDir, name+".md")))
 		}
 	} else {
 		b.WriteString("_No workflows defined yet. Add one with `sync-agents add workflow <name>`._\n")
@@ -1315,7 +1338,7 @@ func (a *App) generateAgentsMD() {
 	if agentFiles := listMDFiles(agentsBucketDir); len(agentFiles) > 0 {
 		b.WriteString("## Agents\n\n")
 		for _, name := range agentFiles {
-			b.WriteString(indexEntry(name, ".agents/agents/"+name+".md", filepath.Join(agentsBucketDir, name+".md")))
+			b.WriteString(indexEntry(name, BucketLinkPrefix(a.ProjectRoot, agentsDir, "agents")+"/"+name+".md", filepath.Join(agentsBucketDir, name+".md")))
 		}
 		b.WriteString("\n")
 	}
@@ -1337,7 +1360,7 @@ func (a *App) generateAgentsMD() {
 		}
 		b.WriteString("## " + ref.title + "\n\n")
 		for _, rel := range files {
-			link := ".agents/" + ref.dir + "/" + rel + ".md"
+			link := BucketLinkPrefix(a.ProjectRoot, agentsDir, ref.dir) + "/" + rel + ".md"
 			b.WriteString(indexEntry(rel, link, filepath.Join(refDir, filepath.FromSlash(rel)+".md")))
 		}
 		b.WriteString("\n")
@@ -1356,7 +1379,7 @@ func (a *App) generateAgentsMD() {
 			sort.Strings(hookFiles)
 			b.WriteString("## Hooks\n\n")
 			for _, name := range hookFiles {
-				link := ".agents/hooks/" + name
+				link := BucketLinkPrefix(a.ProjectRoot, agentsDir, "hooks") + "/" + name
 				srcPath := filepath.Join(hooksBucketDir, name)
 				// Hook fragments don't have markdown frontmatter for
 				// description — just link the file.
@@ -1429,16 +1452,19 @@ func (a *App) generateAgentsMD() {
 			Semantic: sem,
 		})
 	}
-	if importLines := ManagedImportBlockForLocal(localArts); len(importLines) > 0 {
-		importBlock := FormatManagedImportBlockForTest(importLines)
-		b.WriteString(importBlock)
-	}
+	// No @-import block here. @-imports are Claude's mechanism for
+	// loading rules, and global sync writes them straight into
+	// CLAUDE.md (see RegenerateClaudeImports). Emitting them into
+	// AGENTS.md as well put a second copy into CLAUDE.md by way of
+	// the mirror, so every rule loaded twice in every session. Other
+	// agents read the markdown links in the index above; they have no
+	// use for @-imports either.
 
-	// Strip any stale managed block the user previously had in
-	// AGENTS.md when the current .agents/ has no passive rules
-	// (so a deleted rule doesn't leave a dead @-import forever).
+	// Strip any import block an earlier version of this generator
+	// wrote into AGENTS.md. Unconditional: the block is never emitted
+	// now, so one found here is always stale.
 	finalContent := b.String()
-	if len(localArts) == 0 {
+	{
 		if existing, err := os.ReadFile(outfile); err == nil {
 			if HasManagedImportBlock(string(existing)) {
 				startIdx := strings.Index(string(existing), ManagedImportBlockStart)
@@ -1454,7 +1480,25 @@ func (a *App) generateAgentsMD() {
 		}
 	}
 
+	// A dry run must never touch the filesystem. This guard lives here
+	// rather than at each call site so every path that regenerates the
+	// index inherits it.
+	if a.DryRun {
+		fmt.Fprintf(a.Stdout, "  would write: %s\n", outfile)
+		return nil
+	}
+
+	// Refuse to regenerate an index that would drop preamble content
+	// the existing file has. The preamble is usually most of AGENTS.md
+	// and its loss is silent, so this fails loudly instead.
+	if preambleWouldBeDropped(outfile, finalContent) {
+		fmt.Fprintf(a.Stderr, "        expected the preamble at: %s\n", a.ResolvePreamblePath())
+		fmt.Fprintf(a.Stderr, "        regenerating now would delete it; check --global-root and $SYNC_AGENTS_GLOBAL_ROOT, or restore the file\n")
+		return fmt.Errorf("refusing to write %s: it contains preamble content and this run produced none", outfile)
+	}
+
 	os.WriteFile(outfile, []byte(finalContent), 0644)
+	return nil
 }
 
 func listMDFiles(dir string) []string {
