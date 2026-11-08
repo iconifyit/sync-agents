@@ -1413,52 +1413,11 @@ func (a *App) generateAgentsMD() error {
 	}
 	b.WriteString("\n")
 
-	// Managed @-import block for Claude. Claude doesn't auto-scan
-	// .claude/rules/*.md and doesn't follow markdown links in
-	// AGENTS.md/CLAUDE.md, so the only reliable mechanism to get
-	// rule content into Claude's context is the `@`-import syntax.
-	// The block is fully regenerated each index (stateless); same
-	// .agents/ state produces the same bytes — idempotent and safe
-	// to re-run on every `sync-agents index` / `sync-agents sync`.
-	//
-	// Paths are project-relative (.claude/rules/<name>.md) because
-	// AGENTS.md is checked into git; absolute paths wouldn't port
-	// across developers. Claude resolves @-import symlinks, so
-	// `.claude/rules/X.md` (which is a symlink to
-	// `.agents/rules/X.md`) loads the same content.
-	var localArts []ClaudeRoutedArtifact
-	for _, name := range ruleFiles {
-		localArts = append(localArts, ClaudeRoutedArtifact{
-			Type:     ArtifactRule,
-			Name:     name,
-			Semantic: Passive, // bucket default: rules are passive
-		})
-	}
-	for _, name := range wfFiles {
-		// Bucket default for workflows is Invocable, but
-		// Claude's workflow destination is commands/<name>.md
-		// which Claude already auto-registers — so passive
-		// workflows aren't relevant to local CLAUDE.md for the
-		// common case. We still include workflows that users
-		// have explicitly marked passive via frontmatter.
-		wfPath := filepath.Join(agentsDir, "workflows", name+".md")
-		sem, err := ResolveSemantic(wfPath, ArtifactWorkflow)
-		if err != nil || sem != Passive {
-			continue
-		}
-		localArts = append(localArts, ClaudeRoutedArtifact{
-			Type:     ArtifactWorkflow,
-			Name:     name,
-			Semantic: sem,
-		})
-	}
-	// No @-import block here. @-imports are Claude's mechanism for
-	// loading rules, and global sync writes them straight into
-	// CLAUDE.md (see RegenerateClaudeImports). Emitting them into
-	// AGENTS.md as well put a second copy into CLAUDE.md by way of
-	// the mirror, so every rule loaded twice in every session. Other
-	// agents read the markdown links in the index above; they have no
-	// use for @-imports either.
+	// AGENTS.md carries no @-import block. Global sync writes Claude's
+	// rule imports into CLAUDE.md (RegenerateClaudeImports); emitting
+	// them here as well put a second copy into CLAUDE.md through the
+	// AGENTS.md mirror. Other agents read the markdown links in the
+	// index above.
 
 	// The generated index never carries an @-import block, so writing
 	// it replaces any block an earlier version of this generator left
