@@ -808,3 +808,35 @@ func TestCmdGlobalSync_ForceLeavesSourceWhenBucketAliasesIt(t *testing.T) {
 		t.Errorf("sync moved something aside: %v", err)
 	}
 }
+
+// TestCmdGlobalSync_ForceLeavesRuleSourceWhenBucketAliasesIt: the same
+// guard for file artifacts. If the Claude rules dir is a link to the
+// global rules tree, a rule's destination is its source file; --force
+// must not move it aside or turn it into a link to itself.
+func TestCmdGlobalSync_ForceLeavesRuleSourceWhenBucketAliasesIt(t *testing.T) {
+	a, root, _ := newGlobalSyncTestApp(t)
+	a.Force = true
+	seedRule(t, a.ResolveGlobalRoot(), "style", "Prefer early returns.\n")
+	source := filepath.Join(a.ResolveGlobalRoot(), "rules", "style.md")
+	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(a.ResolveGlobalRoot(), "rules"), filepath.Join(root, ".claude", "rules")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.CmdGlobalSync(GlobalSyncOpts{Targets: []string{"claude"}}); err != nil {
+		t.Fatalf("CmdGlobalSync: %v", err)
+	}
+
+	info, err := os.Lstat(source)
+	if err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("rule source is no longer a regular file: info=%v err=%v", info, err)
+	}
+	if data, err := os.ReadFile(source); err != nil || string(data) != "Prefer early returns.\n" {
+		t.Errorf("rule source content changed: %q %v", data, err)
+	}
+	if _, err := os.Lstat(source + ".replaced-by-sync-agents"); !os.IsNotExist(err) {
+		t.Errorf("sync moved the rule source aside: %v", err)
+	}
+}
