@@ -306,7 +306,7 @@ Global provider directory map:
 
 | scope     | Target token | Global directory                                  | local dir mapping (for sync) / symlink | INVOCABLE ? (/)    | Context to Sync to                                          |
 | --------- | ------------ | ------------------------------------------------- | -------------------------------------- | ------------------ | ----------------------------------------------------------- |
-| skills    | `claude`     | `~/.claude/skills/${name}/SKILL.md`               | `~/.claude/skills/${name}/SKILL.md`    | YES                | 1 to 1                                                      |
+| skills    | `claude`     | `~/.claude/skills/${name}` (link to the skill dir) | `~/.claude/skills/${name}`             | YES                | 1 to 1                                                      |
 | skills    | `windsurf`   | `~/.codeium/windsurf/skills/${name}/SKILL.md`     | `~/.windsurf/skills/${name}/SKILL.md`  | NO auto run        | 1 to 2 (workflows/skills) claudee skills picked by windsurf |
 | skills    | `github`     | `~/.github/skills/${name}/SKILL.md`               | `~/.github/skills/${name}/SKILL.md`    | YES                | 1 to 1                                                      |
 | rules     | `claude`     | `~/.claude/rules/${name}.md`                      | `~/.claude/rules/${name}.md`           | NO                 | 1 to 1                                                      |

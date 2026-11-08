@@ -78,7 +78,12 @@ warning names the path so you can investigate.
 
 With `--force`, the conflicting file is moved to
 `<path>.replaced-by-sync-agents` (so it's recoverable) before the
-fresh symlink is placed.
+fresh symlink is placed. A conflicting directory, such as a Claude
+skill dir, is moved to `<tool dir>/.replaced-by-sync-agents/<bucket>/<name>`
+(for example `~/.claude/.replaced-by-sync-agents/skills/<name>`), outside
+the directory the tool scans, so Claude does not load the backup as a
+second copy of the skill. If a backup is already at that path, the sync
+stops for that destination and names it.
 
 Concat files don't go through the conflict check — they're
 sync-agents-owned by design. Any user edits to a generated concat
@@ -91,7 +96,7 @@ will be overwritten on the next sync; that's why the banner says
 |---|---|---|
 | `--targets <list>` | all | Comma-separated tool IDs to sync. Aliases honored: `windsurf` resolves to `codeium`. Unknown names produce a warning and are skipped. |
 | `--dry-run` | false | Print every planned operation prefixed with `[dry-run]`. No filesystem writes. |
-| `--force` | false | Replace non-symlink files in the way (saved as `*.replaced-by-sync-agents`). |
+| `--force` | false | Replace non-symlinks in the way (files saved as `*.replaced-by-sync-agents`; directories under `<tool dir>/.replaced-by-sync-agents/`). |
 | `--global-root <path>` | `$HOME/.agents` | Override the global root. See [Global root resolution](../architecture/global-root-resolution.md). |
 
 `--dry-run` and `--force` are persistent flags inherited from `rootCmd`.

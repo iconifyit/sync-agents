@@ -659,3 +659,72 @@ func TestCmdGlobalSync_ClaudeImportsTargetsFilter(t *testing.T) {
 		t.Errorf("CLAUDE.md written when claude target filtered:\n%s", string(data))
 	}
 }
+
+// TestCmdGlobalSync_ForceMovesSkillDirOutOfClaudeScan: with --force, a
+// skill directory in the way is kept recoverable, but outside
+// ~/.claude/skills/. Claude loads any subdirectory there that holds a
+// SKILL.md, so a backup left beside the new link would load as a
+// duplicate skill.
+func TestCmdGlobalSync_ForceMovesSkillDirOutOfClaudeScan(t *testing.T) {
+	a, root, _ := newGlobalSyncTestApp(t)
+	a.Force = true
+	seedSkill(t, a.ResolveGlobalRoot(), "big", "# big skill\n", nil)
+	skillsDir := filepath.Join(root, ".claude", "skills")
+	inTheWay := filepath.Join(skillsDir, "big")
+	if err := os.MkdirAll(inTheWay, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(inTheWay, "SKILL.md"), []byte("# my own big\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.CmdGlobalSync(GlobalSyncOpts{Targets: []string{"claude"}}); err != nil {
+		t.Fatalf("CmdGlobalSync: %v", err)
+	}
+
+	entries, err := os.ReadDir(skillsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "big" {
+		names := []string{}
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("~/.claude/skills holds %v, want only the new link", names)
+	}
+	backup := filepath.Join(root, ".claude", ".replaced-by-sync-agents", "skills", "big", "SKILL.md")
+	if data, err := os.ReadFile(backup); err != nil || string(data) != "# my own big\n" {
+		t.Errorf("replaced skill dir not recoverable at %s: %q %v", backup, data, err)
+	}
+}
+
+// TestCmdGlobalSync_ForceRefusesToOverwriteExistingBackup: when an
+// earlier --force already left a backup at the backup path, a second
+// forced sync leaves both the file in the way and the existing backup
+// untouched; a rename would otherwise replace the earlier backup.
+func TestCmdGlobalSync_ForceRefusesToOverwriteExistingBackup(t *testing.T) {
+	a, root, _ := newGlobalSyncTestApp(t)
+	a.Force = true
+	seedRule(t, a.ResolveGlobalRoot(), "security", "be careful\n")
+	inTheWay := filepath.Join(root, ".claude", "rules", "security.md")
+	oldBackup := inTheWay + ".replaced-by-sync-agents"
+	if err := os.MkdirAll(filepath.Dir(inTheWay), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for path, body := range map[string]string{inTheWay: "current\n", oldBackup: "earlier backup\n"} {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := a.CmdGlobalSync(GlobalSyncOpts{Targets: []string{"claude"}}); err != nil {
+		t.Fatalf("CmdGlobalSync: %v", err)
+	}
+
+	for path, want := range map[string]string{inTheWay: "current\n", oldBackup: "earlier backup\n"} {
+		if data, err := os.ReadFile(path); err != nil || string(data) != want {
+			t.Errorf("%s changed: got %q, %v; want %q", path, data, err, want)
+		}
+	}
+}

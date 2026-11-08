@@ -299,8 +299,8 @@ func (a *App) resolveSyncTools(targets []string) ([]Tool, error) {
 //     the directory link. Nothing but a link sync-agents created is
 //     removed, and nothing is followed into the skill's source.
 //   - Any other non-symlink at dest: skip with warning unless
-//     App.Force is set, in which case the existing file is renamed to
-//     a `.replaced-by-sync-agents` sibling and the symlink is placed.
+//     App.Force is set, in which case it is moved aside (see
+//     forcedBackupPath) and the symlink is placed.
 //
 // Symlinks are absolute paths (SPEC-002 §Global sync — symlink
 // semantics). Relative would be brittle because the global tree's
@@ -342,7 +342,13 @@ func (a *App) applySymlinkDestination(toolID string, dest Destination) error {
 			}
 			// With --force, rename the conflicting file/dir to a
 			// side path so it's recoverable.
-			backup := fmt.Sprintf("%s.replaced-by-sync-agents", dest.Path)
+			backup := forcedBackupPath(dest.Path, existing.IsDir())
+			if err := os.MkdirAll(filepath.Dir(backup), 0o755); err != nil {
+				return err
+			}
+			if _, err := os.Lstat(backup); err == nil {
+				return fmt.Errorf("cannot move %s aside: %s already exists; move or remove it first", dest.Path, backup)
+			}
 			if err := os.Rename(dest.Path, backup); err != nil {
 				return err
 			}
@@ -359,6 +365,22 @@ func (a *App) applySymlinkDestination(toolID string, dest Destination) error {
 		return err
 	}
 	return nil
+}
+
+// forcedBackupPath returns where --force moves a non-symlink that is
+// in the way of a destination.
+//
+// A file becomes a `<path>.replaced-by-sync-agents` sibling. A
+// directory (a skill dir such as ~/.claude/skills/<name>) instead goes
+// to `<tool dir>/.replaced-by-sync-agents/<bucket>/<name>`: a sibling
+// would stay inside the bucket the tool scans, and Claude would load a
+// backed-up skill directory as a second copy of the skill.
+func forcedBackupPath(destPath string, isDir bool) string {
+	if !isDir {
+		return destPath + ".replaced-by-sync-agents"
+	}
+	bucketDir := filepath.Dir(destPath)
+	return filepath.Join(filepath.Dir(bucketDir), ".replaced-by-sync-agents", filepath.Base(bucketDir), filepath.Base(destPath))
 }
 
 // isLegacyClaudeSkillDir reports whether path is the Claude skill
