@@ -470,3 +470,35 @@ func TestCmdIndex_NoFix(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestCmdIndex_OldImportBlockDoesNotFreezeIndex: an AGENTS.md written
+// by an earlier version (carrying an @-import block) is replaced by the
+// freshly generated index. The old content must not survive just
+// because it held an import block: a rule added since must appear, and
+// a rule removed since must disappear.
+func TestCmdIndex_OldImportBlockDoesNotFreezeIndex(t *testing.T) {
+	a, root, _ := newLocalIndexTestApp(t)
+	old := "# AGENTS\n\n## Rules\n\n- [retired](.agents/rules/retired.md)\n\n" +
+		ManagedImportBlockStart + "\n@.claude/rules/retired.md\n" + ManagedImportBlockEnd + "\n"
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".agents", "rules", "security.md"), []byte("body\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.CmdIndex(); err != nil {
+		t.Fatalf("CmdIndex: %v", err)
+	}
+
+	s, _ := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	if !strings.Contains(string(s), "[security]") {
+		t.Errorf("new rule missing; the old file was kept:\n%s", s)
+	}
+	if strings.Contains(string(s), "retired") {
+		t.Errorf("removed rule still indexed; the old file was kept:\n%s", s)
+	}
+	if HasManagedImportBlock(string(s)) {
+		t.Errorf("import block written:\n%s", s)
+	}
+}

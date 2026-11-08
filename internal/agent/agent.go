@@ -1460,25 +1460,10 @@ func (a *App) generateAgentsMD() error {
 	// agents read the markdown links in the index above; they have no
 	// use for @-imports either.
 
-	// Strip any import block an earlier version of this generator
-	// wrote into AGENTS.md. Unconditional: the block is never emitted
-	// now, so one found here is always stale.
+	// The generated index never carries an @-import block, so writing
+	// it replaces any block an earlier version of this generator left
+	// in AGENTS.md.
 	finalContent := b.String()
-	{
-		if existing, err := os.ReadFile(outfile); err == nil {
-			if HasManagedImportBlock(string(existing)) {
-				startIdx := strings.Index(string(existing), ManagedImportBlockStart)
-				endIdx := strings.Index(string(existing)[startIdx:], ManagedImportBlockEnd)
-				if startIdx >= 0 && endIdx >= 0 {
-					endFull := startIdx + endIdx + len(ManagedImportBlockEnd)
-					if endFull < len(existing) && existing[endFull] == '\n' {
-						endFull++
-					}
-					finalContent = string(existing[:startIdx]) + string(existing[endFull:])
-				}
-			}
-		}
-	}
 
 	// A dry run must never touch the filesystem. This guard lives here
 	// rather than at each call site so every path that regenerates the
