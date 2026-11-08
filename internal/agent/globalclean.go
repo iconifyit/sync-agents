@@ -224,19 +224,45 @@ func (a *App) cleanToolDir(toolID, dir, agentsRoot string) (int, error) {
 	return removed, nil
 }
 
-// scrubClaudeManagedBlock reads the file at claudeMDPath, strips the
-// managed @-import block (if present), and either rewrites the file
-// without it or removes the file outright if stripping would leave
-// it empty (whitespace-only). Returns (removed, dirPruned, error):
+// claudeManagedRegions are the marker pairs global sync writes into a
+// global CLAUDE.md: the @-import block and the AGENTS.md mirror.
+var claudeManagedRegions = [][2]string{
+	{ManagedImportBlockStart, ManagedImportBlockEnd},
+	{AgentsMDBlockStart, AgentsMDBlockEnd},
+}
+
+// removeRegion cuts the first startMarker…endMarker region (and the
+// newline after it) out of content, reporting whether one was found.
+func removeRegion(content, startMarker, endMarker string) (string, bool) {
+	startIdx := strings.Index(content, startMarker)
+	if startIdx < 0 {
+		return content, false
+	}
+	endIdx := strings.Index(content[startIdx:], endMarker)
+	if endIdx < 0 {
+		return content, false
+	}
+	endFull := startIdx + endIdx + len(endMarker)
+	if endFull < len(content) && content[endFull] == '\n' {
+		endFull++
+	}
+	return content[:startIdx] + content[endFull:], true
+}
+
+// scrubClaudeManagedBlock reads the file at claudeMDPath, strips every
+// region global sync manages there (see claudeManagedRegions), and
+// either rewrites the file without them or removes the file outright
+// if stripping would leave it empty (whitespace-only). Returns
+// (removed, dirPruned, error):
 //
 //   - removed: 1 if the scrub wrote or removed something, 0 if the
-//     file had no managed block. Used by clean's running total.
+//     file had no managed region. Used by clean's running total.
 //   - dirPruned: true when the file was removed and its parent dir
 //     may now have become empty. Useful for dry-run reporting.
 //
-// When the file has content outside the markers, only the block is
+// When the file has content outside the markers, only the regions are
 // stripped; the rest is preserved. This protects user-authored
-// frontmatter or prose that may co-exist with the managed region.
+// frontmatter or prose that may co-exist with the managed regions.
 func (a *App) scrubClaudeManagedBlock(claudeMDPath string, dryRun bool) (int, bool, error) {
 	data, err := os.ReadFile(claudeMDPath)
 	if err != nil {
@@ -246,44 +272,39 @@ func (a *App) scrubClaudeManagedBlock(claudeMDPath string, dryRun bool) (int, bo
 		return 0, false, err
 	}
 
-	content := string(data)
-	startIdx := strings.Index(content, ManagedImportBlockStart)
-	if startIdx < 0 {
-		return 0, false, nil
+	remaining := string(data)
+	found := false
+	for _, region := range claudeManagedRegions {
+		var cut bool
+		remaining, cut = removeRegion(remaining, region[0], region[1])
+		found = found || cut
 	}
-	endIdx := strings.Index(content[startIdx:], ManagedImportBlockEnd)
-	if endIdx < 0 {
+	if !found {
 		return 0, false, nil
-	}
-	endFull := startIdx + endIdx + len(ManagedImportBlockEnd)
-	if endFull < len(content) && content[endFull] == '\n' {
-		endFull++
 	}
 
 	if dryRun {
-		a.Info(fmt.Sprintf("[dry-run] would scrub managed block from %s", claudeMDPath))
+		a.Info(fmt.Sprintf("[dry-run] would scrub managed blocks from %s", claudeMDPath))
 		return 1, false, nil
 	}
 
-	// Splice out the managed block. Collapse any resulting
-	// double-blank-lines into a single one so the preserved
-	// regions don't carry awkward whitespace after scrub.
-	remaining := content[:startIdx] + content[endFull:]
+	// Collapse any resulting double-blank-lines into a single one so
+	// the preserved regions don't carry awkward whitespace after scrub.
 	for strings.Contains(remaining, "\n\n\n") {
 		remaining = strings.ReplaceAll(remaining, "\n\n\n", "\n\n")
 	}
 	remaining = strings.TrimSpace(remaining)
 
 	if remaining == "" {
-		// Whole file was the managed block — drop the file so
-		// the per-tool root's empty-dir check can prune .claude/.
+		// Whole file was managed regions — drop the file so the
+		// per-tool root's empty-dir check can prune .claude/.
 		if err := os.Remove(claudeMDPath); err != nil {
 			return 0, false, err
 		}
 		return 1, true, nil
 	}
 
-	// Had user content outside the block — rewrite without it.
+	// Had user content outside the regions — rewrite without them.
 	if !strings.HasSuffix(remaining, "\n") {
 		remaining += "\n"
 	}

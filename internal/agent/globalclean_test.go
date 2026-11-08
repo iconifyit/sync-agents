@@ -312,3 +312,60 @@ func TestCmdGlobalClean_RemovesClaudeSkillLinkOnly(t *testing.T) {
 		}
 	}
 }
+
+// TestCmdGlobalClean_RemovesMirroredAgentsMDBlock: global sync writes
+// two managed regions into ~/.claude/CLAUDE.md, the @-import block and
+// the AGENTS.md mirror. Clean removes both, so no mirrored instructions
+// stay loaded after a clean, and keeps the user's own text.
+func TestCmdGlobalClean_RemovesMirroredAgentsMDBlock(t *testing.T) {
+	a, root, _ := newCleanTestApp(t)
+	claudeMD := filepath.Join(root, ".claude", "CLAUDE.md")
+	if err := os.MkdirAll(filepath.Dir(claudeMD), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "# My notes\n\nKeep me.\n\n" +
+		AgentsMDBlockStart + "\n# Principles\nAlways verify.\n" + AgentsMDBlockEnd + "\n\n" +
+		ManagedImportBlockStart + "\n@/rules/security.md\n" + ManagedImportBlockEnd + "\n"
+	if err := os.WriteFile(claudeMD, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.CmdGlobalClean(GlobalCleanOpts{Targets: []string{"claude"}}); err != nil {
+		t.Fatalf("clean: %v", err)
+	}
+
+	data, err := os.ReadFile(claudeMD)
+	if err != nil {
+		t.Fatalf("CLAUDE.md with user text was removed: %v", err)
+	}
+	s := string(data)
+	for _, gone := range []string{AgentsMDBlockStart, "Always verify.", ManagedImportBlockStart, "@/rules/security.md"} {
+		if strings.Contains(s, gone) {
+			t.Errorf("clean left %q in CLAUDE.md:\n%s", gone, s)
+		}
+	}
+	if !strings.Contains(s, "Keep me.") {
+		t.Errorf("clean removed user text:\n%s", s)
+	}
+}
+
+// TestCmdGlobalClean_RemovesMirrorOnlyClaudeMD: a CLAUDE.md holding
+// nothing but the AGENTS.md mirror is removed entirely by clean.
+func TestCmdGlobalClean_RemovesMirrorOnlyClaudeMD(t *testing.T) {
+	a, root, _ := newCleanTestApp(t)
+	claudeMD := filepath.Join(root, ".claude", "CLAUDE.md")
+	if err := os.MkdirAll(filepath.Dir(claudeMD), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(claudeMD, []byte(AgentsMDBlockStart+"\n# Principles\n"+AgentsMDBlockEnd+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.CmdGlobalClean(GlobalCleanOpts{Targets: []string{"claude"}}); err != nil {
+		t.Fatalf("clean: %v", err)
+	}
+
+	if _, err := os.Stat(claudeMD); !os.IsNotExist(err) {
+		t.Errorf("mirror-only CLAUDE.md still present: %v", err)
+	}
+}
