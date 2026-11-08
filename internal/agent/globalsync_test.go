@@ -728,3 +728,48 @@ func TestCmdGlobalSync_ForceRefusesToOverwriteExistingBackup(t *testing.T) {
 		}
 	}
 }
+
+// TestCmdGlobalSync_LeavesUserSkillDirLink: a link at the Claude skill
+// path that points at a directory outside the global root is the
+// user's (the same ownership rule global clean applies). A plain sync
+// leaves it as it is; --force replaces it and names the old target.
+func TestCmdGlobalSync_LeavesUserSkillDirLink(t *testing.T) {
+	a, root, stdout := newGlobalSyncTestApp(t)
+	seedSkill(t, a.ResolveGlobalRoot(), "adr-authoring", "# adr-authoring\n", nil)
+	userCopy := filepath.Join(root, "work", "skills", "adr-authoring")
+	if err := os.MkdirAll(userCopy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(userCopy, "SKILL.md"), []byte("# my copy\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, ".claude", "skills", "adr-authoring")
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(userCopy, link); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.CmdGlobalSync(GlobalSyncOpts{Targets: []string{"claude"}}); err != nil {
+		t.Fatalf("CmdGlobalSync: %v", err)
+	}
+	if got, _ := os.Readlink(link); got != userCopy {
+		t.Fatalf("plain sync replaced the user's link: now -> %q", got)
+	}
+
+	a.Force = true
+	stdout.Reset()
+	if err := a.CmdGlobalSync(GlobalSyncOpts{Targets: []string{"claude"}}); err != nil {
+		t.Fatalf("CmdGlobalSync --force: %v", err)
+	}
+	if got, _ := os.Readlink(link); got != filepath.Join(a.ResolveGlobalRoot(), "skills", "adr-authoring") {
+		t.Errorf("--force did not place the sync link: now -> %q", got)
+	}
+	if !strings.Contains(stdout.String(), userCopy) {
+		t.Errorf("--force output does not name the replaced target %s:\n%s", userCopy, stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(userCopy, "SKILL.md")); err != nil {
+		t.Errorf("--force touched the user's directory: %v", err)
+	}
+}

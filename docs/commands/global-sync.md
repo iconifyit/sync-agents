@@ -44,6 +44,8 @@ Claude links a skill's whole directory, not just its `SKILL.md`. Claude reads a 
 
 A real `~/.claude/skills/<name>/` directory whose only entry is a `SKILL.md` link to the skill (the layout earlier versions produced) is replaced by the directory link on the next sync. A directory holding anything else is left untouched and reported, like any other non-symlink in the way; `--force` moves it aside.
 
+A link at `~/.claude/skills/<name>` that points at a directory outside the global root (for example straight at a working copy) is the user's, the same rule `global clean` applies. Sync leaves it in place and `global status` reports it as `[not-a-symlink]`; `--force` replaces it and prints its old target.
+
 Skipped cases:
 
 - **Multi-file invocable skill → Codeium**: Windsurf workflows are

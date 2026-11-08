@@ -292,8 +292,10 @@ func (a *App) resolveSyncTools(targets []string) ([]Tool, error) {
 //   - Nothing at dest: create the symlink (after ensuring its parent
 //     dir exists).
 //   - Symlink already at dest: if it points at the right target,
-//     no-op (logged once at a higher level for brevity). Otherwise
-//     replace.
+//     no-op (logged once at a higher level for brevity). A link to a
+//     directory outside the global root is the user's (see
+//     isUserDirLink) and is replaced only with App.Force, with a
+//     warning naming its old target. Any other link is repaired.
 //   - A legacy Claude skill dir at dest (see isLegacyClaudeSkillDir):
 //     remove its one SKILL.md link and the then-empty dir, and place
 //     the directory link. Nothing but a link sync-agents created is
@@ -322,11 +324,23 @@ func (a *App) applySymlinkDestination(toolID string, dest Destination) error {
 			if current == target {
 				return nil
 			}
-			// Drifted symlink — repair.
-			if err := os.Remove(dest.Path); err != nil {
-				return err
+			if isUserDirLink(dest.Path, a.ResolveGlobalRoot()) {
+				// A link to a directory outside the global root is the
+				// user's, as global clean also treats it.
+				if !a.Force {
+					return fmt.Errorf("user-owned link at %s -> %s; pass --force to replace", dest.Path, current)
+				}
+				if err := os.Remove(dest.Path); err != nil {
+					return err
+				}
+				a.Warn(fmt.Sprintf("[%s] replaced user-owned link %s -> %s", toolID, dest.Path, current))
+			} else {
+				// Drifted symlink — repair.
+				if err := os.Remove(dest.Path); err != nil {
+					return err
+				}
+				a.Info(fmt.Sprintf("[%s] repair: %s now -> %s", toolID, dest.Path, target))
 			}
-			a.Info(fmt.Sprintf("[%s] repair: %s now -> %s", toolID, dest.Path, target))
 		} else if isLegacyClaudeSkillDir(dest.Path, target) {
 			if err := os.Remove(filepath.Join(dest.Path, "SKILL.md")); err != nil {
 				return err
@@ -343,11 +357,11 @@ func (a *App) applySymlinkDestination(toolID string, dest Destination) error {
 			// With --force, rename the conflicting file/dir to a
 			// side path so it's recoverable.
 			backup := forcedBackupPath(dest.Path, existing.IsDir())
-			if err := os.MkdirAll(filepath.Dir(backup), 0o755); err != nil {
-				return err
-			}
 			if _, err := os.Lstat(backup); err == nil {
 				return fmt.Errorf("cannot move %s aside: %s already exists; move or remove it first", dest.Path, backup)
+			}
+			if err := os.MkdirAll(filepath.Dir(backup), 0o755); err != nil {
+				return err
 			}
 			if err := os.Rename(dest.Path, backup); err != nil {
 				return err
@@ -365,6 +379,23 @@ func (a *App) applySymlinkDestination(toolID string, dest Destination) error {
 		return err
 	}
 	return nil
+}
+
+// isUserDirLink reports whether path is a symlink to a directory
+// outside globalRoot. Such a link was made by the user (for example a
+// Claude skill linked straight to a working copy), not by global sync,
+// so it is the user's in the sense global clean already applies via
+// symlinkPointsInto.
+func isUserDirLink(path, globalRoot string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return false
+	}
+	targetInfo, err := os.Stat(path)
+	if err != nil || !targetInfo.IsDir() {
+		return false
+	}
+	return !symlinkPointsInto(path, globalRoot)
 }
 
 // forcedBackupPath returns where --force moves a non-symlink that is

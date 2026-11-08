@@ -297,3 +297,29 @@ func statusLineFor(out, name string) string {
 	}
 	return ""
 }
+
+// TestCmdGlobalStatus_UserSkillDirLink: a user-owned link at the
+// Claude skill path is reported as something sync will not replace
+// without --force, not as drift sync would repair.
+func TestCmdGlobalStatus_UserSkillDirLink(t *testing.T) {
+	a, root, stdout := newStatusTestApp(t)
+	seedSkill(t, a.ResolveGlobalRoot(), "adr-authoring", "# adr-authoring\n", nil)
+	userCopy := filepath.Join(root, "work", "skills", "adr-authoring")
+	if err := os.MkdirAll(userCopy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, ".claude", "skills", "adr-authoring")
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(userCopy, link); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.CmdGlobalStatus(GlobalStatusOpts{Targets: []string{"claude"}}); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if line := statusLineFor(stdout.String(), "adr-authoring"); !strings.Contains(line, "[not-a-symlink]") {
+		t.Errorf("user skill link: want [not-a-symlink], got %q\n%s", line, stdout.String())
+	}
+}
