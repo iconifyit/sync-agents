@@ -274,9 +274,16 @@ func (a *App) scrubClaudeManagedBlock(claudeMDPath string, dryRun bool) (int, bo
 
 	remaining := string(data)
 	found := false
-	for _, region := range claudeManagedRegions {
-		var cut bool
-		remaining, cut = removeRegion(remaining, region[0], region[1])
+	// Repeat until no region is left: files written by older versions
+	// can hold a region more than once, including one nested inside the
+	// other.
+	for cut := true; cut; {
+		cut = false
+		for _, region := range claudeManagedRegions {
+			var removed bool
+			remaining, removed = removeRegion(remaining, region[0], region[1])
+			cut = cut || removed
+		}
 		found = found || cut
 	}
 	if !found {

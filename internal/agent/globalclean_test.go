@@ -369,3 +369,39 @@ func TestCmdGlobalClean_RemovesMirrorOnlyClaudeMD(t *testing.T) {
 		t.Errorf("mirror-only CLAUDE.md still present: %v", err)
 	}
 }
+
+// TestCmdGlobalClean_RemovesRepeatedManagedRegions: a CLAUDE.md written
+// by older versions can hold a managed region more than once (an import
+// block nested inside the mirror and another after it). Clean removes
+// every occurrence, not just the first, and keeps the user's text.
+func TestCmdGlobalClean_RemovesRepeatedManagedRegions(t *testing.T) {
+	a, root, _ := newCleanTestApp(t)
+	claudeMD := filepath.Join(root, ".claude", "CLAUDE.md")
+	if err := os.MkdirAll(filepath.Dir(claudeMD), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	imports := ManagedImportBlockStart + "\n@/rules/security.md\n" + ManagedImportBlockEnd + "\n"
+	content := "Keep me.\n\n" +
+		AgentsMDBlockStart + "\n# Principles\n" + imports + AgentsMDBlockEnd + "\n\n" +
+		imports
+	if err := os.WriteFile(claudeMD, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.CmdGlobalClean(GlobalCleanOpts{Targets: []string{"claude"}}); err != nil {
+		t.Fatalf("clean: %v", err)
+	}
+
+	data, err := os.ReadFile(claudeMD)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, gone := range []string{ManagedImportBlockStart, AgentsMDBlockStart, "@/rules/security.md", "# Principles"} {
+		if strings.Contains(string(data), gone) {
+			t.Errorf("clean left %q:\n%s", gone, data)
+		}
+	}
+	if !strings.Contains(string(data), "Keep me.") {
+		t.Errorf("clean removed user text:\n%s", data)
+	}
+}
