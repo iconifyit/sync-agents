@@ -446,3 +446,25 @@ func TestGenerateThenMirror_LinksResolveInBothLayouts(t *testing.T) {
 		})
 	}
 }
+
+// TestCmdGlobalSync_MirrorsAgentsMDWithNoArtifacts: a global tree with an
+// AGENTS.md but no rules, skills or workflows still mirrors AGENTS.md
+// into the global CLAUDE.md; the empty-tree early exit applies only when
+// there is nothing at all to deliver.
+func TestCmdGlobalSync_MirrorsAgentsMDWithNoArtifacts(t *testing.T) {
+	_, globalRoot := seedAgentsRepo(t, "# AGENTS\n\nAlways verify before declaring success.\n")
+	a := &App{GlobalRoot: globalRoot, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}}
+
+	if err := a.CmdGlobalSync(GlobalSyncOpts{Targets: []string{"claude"}}); err != nil {
+		t.Fatalf("CmdGlobalSync: %v", err)
+	}
+
+	claudeMD := filepath.Join(filepath.Dir(globalRoot), ".claude", "CLAUDE.md")
+	data, err := os.ReadFile(claudeMD)
+	if err != nil {
+		t.Fatalf("AGENTS.md was not mirrored: %v", err)
+	}
+	if !strings.Contains(string(data), "Always verify before declaring success.") {
+		t.Errorf("mirror missing the AGENTS.md content:\n%s", data)
+	}
+}

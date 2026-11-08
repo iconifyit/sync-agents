@@ -83,11 +83,12 @@ func (a *App) CmdGlobalSync(opts GlobalSyncOpts) error {
 	}
 
 	if len(artifacts) == 0 {
-		// Only bail when there are truly no artifacts AND no hooks.
-		// Hooks aren't discovered as Artifacts (they batch-merge
-		// into settings.json), so an empty artifact slice doesn't
-		// mean nothing to do when .agents/hooks/ has content.
-		if !hasClaudeTarget || !dirExists(filepath.Join(root, "hooks")) {
+		// Only bail when there are truly no artifacts AND nothing else
+		// to deliver to Claude: hooks aren't discovered as Artifacts
+		// (they batch-merge into settings.json), and an AGENTS.md is
+		// mirrored into CLAUDE.md even when the tree has no artifacts.
+		claudeHasWork := dirExists(filepath.Join(root, "hooks")) || ResolveGlobalAgentsMDPath(root) != ""
+		if !hasClaudeTarget || !claudeHasWork {
 			a.Info("no artifacts under " + root + "; nothing to sync")
 			return nil
 		}
