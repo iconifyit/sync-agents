@@ -244,22 +244,22 @@ func TestManagedImportBlockForLocal(t *testing.T) {
 
 func TestResolveClaudeMDPath(t *testing.T) {
 	tests := []struct {
-		name     string
-		parent   string
+		name      string
+		parent    string
 		hasAgents bool
-		want     string
+		want      string
 	}{
 		{
-			name:     "AGENTS.md takes precedence",
-			parent:   "/project",
+			name:      "AGENTS.md takes precedence",
+			parent:    "/project",
 			hasAgents: true,
-			want:     "/project/AGENTS.md",
+			want:      "/project/AGENTS.md",
 		},
 		{
-			name:     "falls back to CLAUDE.md",
-			parent:   "/project",
+			name:      "falls back to CLAUDE.md",
+			parent:    "/project",
 			hasAgents: false,
-			want:     "/project/CLAUDE.md",
+			want:      "/project/CLAUDE.md",
 		},
 	}
 	for _, tt := range tests {

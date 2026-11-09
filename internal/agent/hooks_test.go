@@ -205,7 +205,7 @@ func TestWriteReadHooksState_RoundTrip(t *testing.T) {
 
 	hooksState := hooksState{
 		Entries: map[string]hooksStateEntry{
-			"lint": {Event: "PreToolUse", SHA: "abc123"},
+			"lint":   {Event: "PreToolUse", SHA: "abc123"},
 			"notify": {Event: "Notification", SHA: "def456"},
 		},
 	}

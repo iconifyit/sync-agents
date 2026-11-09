@@ -248,3 +248,99 @@ func TestCmdGlobalStatus_TargetsFilter(t *testing.T) {
 		}
 	}
 }
+
+// TestCmdGlobalStatus_ClaudeSkillLinkStates: after sync the Claude
+// skill directory link reports [synced]; a legacy skill dir holding
+// only a SKILL.md link reports [drifted], since the next sync
+// replaces it.
+func TestCmdGlobalStatus_ClaudeSkillLinkStates(t *testing.T) {
+	a, root, stdout := newStatusTestApp(t)
+	seedSkill(t, a.ResolveGlobalRoot(), "deploy-script", "# deploy-script\n", map[string]string{"deploy-lib.sh": "main\n"})
+
+	if err := a.CmdGlobalSync(GlobalSyncOpts{Targets: []string{"claude"}}); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	stdout.Reset()
+	if err := a.CmdGlobalStatus(GlobalStatusOpts{Targets: []string{"claude"}}); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if line := statusLineFor(stdout.String(), "deploy-script"); !strings.Contains(line, "[synced]") {
+		t.Errorf("skill link after sync: want [synced], got %q\n%s", line, stdout.String())
+	}
+
+	// Replace the link with the legacy layout.
+	link := filepath.Join(root, ".claude", "skills", "deploy-script")
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(link, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(a.ResolveGlobalRoot(), "skills", "deploy-script", "SKILL.md"), filepath.Join(link, "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	if err := a.CmdGlobalStatus(GlobalStatusOpts{Targets: []string{"claude"}}); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if line := statusLineFor(stdout.String(), "deploy-script"); !strings.Contains(line, "[drifted]") {
+		t.Errorf("legacy skill dir: want [drifted], got %q\n%s", line, stdout.String())
+	}
+}
+
+// statusLineFor returns the first status output line naming the artifact.
+func statusLineFor(out, name string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, name) {
+			return line
+		}
+	}
+	return ""
+}
+
+// TestCmdGlobalStatus_UserSkillDirLink: a user-owned link at the
+// Claude skill path is reported as something sync will not replace
+// without --force, not as drift sync would repair.
+func TestCmdGlobalStatus_UserSkillDirLink(t *testing.T) {
+	a, root, stdout := newStatusTestApp(t)
+	seedSkill(t, a.ResolveGlobalRoot(), "adr-authoring", "# adr-authoring\n", nil)
+	userCopy := filepath.Join(root, "work", "skills", "adr-authoring")
+	if err := os.MkdirAll(userCopy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, ".claude", "skills", "adr-authoring")
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(userCopy, link); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.CmdGlobalStatus(GlobalStatusOpts{Targets: []string{"claude"}}); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if line := statusLineFor(stdout.String(), "adr-authoring"); !strings.Contains(line, "[not-a-symlink]") {
+		t.Errorf("user skill link: want [not-a-symlink], got %q\n%s", line, stdout.String())
+	}
+}
+
+// TestCmdGlobalStatus_AliasedSkillDirIsSynced: when the Claude skills
+// dir is a link to the global skills tree, each skill is already in
+// place, and status says so rather than reporting a conflict.
+func TestCmdGlobalStatus_AliasedSkillDirIsSynced(t *testing.T) {
+	a, root, stdout := newStatusTestApp(t)
+	seedSkill(t, a.ResolveGlobalRoot(), "big", "# big skill\n", nil)
+	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(a.ResolveGlobalRoot(), "skills"), filepath.Join(root, ".claude", "skills")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.CmdGlobalStatus(GlobalStatusOpts{Targets: []string{"claude"}}); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if line := statusLineFor(stdout.String(), "skill/big"); !strings.Contains(line, "[synced]") {
+		t.Errorf("aliased skill: want [synced], got %q\n%s", line, stdout.String())
+	}
+}

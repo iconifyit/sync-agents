@@ -34,11 +34,17 @@ every registered tool, the sync:
 
 | Tool | Invocable destination | Passive destination |
 |---|---|---|
-| `claude` | `~/.claude/skills/<name>/SKILL.md` (skill) or `~/.claude/commands/<name>.md` (rule/workflow) | `~/.claude/rules/<name>.md` |
+| `claude` | `~/.claude/skills/<name>` → the skill directory (skill) or `~/.claude/commands/<name>.md` (rule/workflow) | `~/.claude/rules/<name>.md` |
 | `codeium` | `~/.codeium/windsurf/global_workflows/<name>.md` (single-file only) | concat → `~/.codeium/windsurf/memories/global_rules.md` |
 | `cursor` | `~/.cursor/rules/<name>.md` | `~/.cursor/rules/<name>.md` (same — Cursor doesn't distinguish) |
 | `copilot` | concat → `~/.github/copilot/instructions.md` | same concat |
 | `codex` | concat → `~/.codex/instructions.md` | same concat |
+
+Claude links a skill's whole directory, not just its `SKILL.md`. Claude reads a skill from `~/.claude/skills/<name>/`, so the skill's supporting files (scripts, templates, references) are reachable only when that path is the skill directory itself. The other symlink tools take one markdown file per artifact and link the skill's `SKILL.md`.
+
+A real `~/.claude/skills/<name>/` directory whose only entry is a `SKILL.md` link to the skill (the layout earlier versions produced) is replaced by the directory link on the next sync. A directory holding anything else is left untouched and reported, like any other non-symlink in the way; `--force` moves it aside.
+
+A link at `~/.claude/skills/<name>` that points at a directory outside the global root (for example straight at a working copy) is the user's, the same rule `global clean` applies. Sync leaves it in place and `global status` reports it as `[not-a-symlink]`; `--force` replaces it and prints its old target.
 
 Skipped cases:
 
@@ -74,7 +80,12 @@ warning names the path so you can investigate.
 
 With `--force`, the conflicting file is moved to
 `<path>.replaced-by-sync-agents` (so it's recoverable) before the
-fresh symlink is placed.
+fresh symlink is placed. A conflicting directory, such as a Claude
+skill dir, is moved to `<tool dir>/.replaced-by-sync-agents/<bucket>/<name>`
+(for example `~/.claude/.replaced-by-sync-agents/skills/<name>`), outside
+the directory the tool scans, so Claude does not load the backup as a
+second copy of the skill. If a backup is already at that path, the sync
+stops for that destination and names it.
 
 Concat files don't go through the conflict check — they're
 sync-agents-owned by design. Any user edits to a generated concat
@@ -87,7 +98,7 @@ will be overwritten on the next sync; that's why the banner says
 |---|---|---|
 | `--targets <list>` | all | Comma-separated tool IDs to sync. Aliases honored: `windsurf` resolves to `codeium`. Unknown names produce a warning and are skipped. |
 | `--dry-run` | false | Print every planned operation prefixed with `[dry-run]`. No filesystem writes. |
-| `--force` | false | Replace non-symlink files in the way (saved as `*.replaced-by-sync-agents`). |
+| `--force` | false | Replace non-symlinks in the way (files saved as `*.replaced-by-sync-agents`; directories under `<tool dir>/.replaced-by-sync-agents/`). |
 | `--global-root <path>` | `$HOME/.agents` | Override the global root. See [Global root resolution](../architecture/global-root-resolution.md). |
 
 `--dry-run` and `--force` are persistent flags inherited from `rootCmd`.

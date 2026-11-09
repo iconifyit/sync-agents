@@ -26,7 +26,8 @@ const (
 	// will repair it.
 	StateDrifted DestinationState = "drifted"
 
-	// StateNotSymlink: a regular file or directory occupies the
+	// StateNotSymlink: a regular file or directory, or a user-owned
+	// link to a directory outside the global root, occupies the
 	// destination. `global sync` will skip it unless --force is set.
 	StateNotSymlink DestinationState = "not-a-symlink"
 
@@ -143,7 +144,7 @@ func (a *App) CmdGlobalStatus(opts GlobalStatusOpts) error {
 		return err
 	}
 
-	entries, concatRows := computeStatus(artifacts, tools, parent)
+	entries, concatRows := computeStatus(artifacts, tools, root, parent)
 
 	a.Info(fmt.Sprintf("global status (%d artifacts, %d tool(s)):", len(artifacts), len(tools)))
 
@@ -163,7 +164,7 @@ func (a *App) CmdGlobalStatus(opts GlobalStatusOpts) error {
 // Split out from CmdGlobalStatus so tests can exercise the state
 // classification without going through the App + filesystem-write
 // surface.
-func computeStatus(artifacts []Artifact, tools []Tool, parent string) (perDestination []StatusEntry, concatRows []StatusEntry) {
+func computeStatus(artifacts []Artifact, tools []Tool, root, parent string) (perDestination []StatusEntry, concatRows []StatusEntry) {
 	// Track concat targets and the entries that contribute to them
 	// so we can both classify their state AND show the contributor
 	// count.
@@ -196,7 +197,11 @@ func computeStatus(artifacts []Artifact, tools []Tool, parent string) (perDestin
 					Detail:       dest.SkipReason,
 				})
 			case StrategySymlink:
-				state, detail := classifySymlinkDestination(dest.Path, symlinkTarget(art))
+				state, detail := classifySymlinkDestination(dest.Path, dest.Target)
+				if state == StateDrifted && isUserDirLink(dest.Path, root) {
+					target, _ := os.Readlink(dest.Path)
+					state, detail = StateNotSymlink, fmt.Sprintf("user-owned link to %s; sync replaces it only with --force", target)
+				}
 				perDestination = append(perDestination, StatusEntry{
 					Tool:            tool.ID,
 					ArtifactType:    art.Type,
@@ -260,6 +265,12 @@ func classifySymlinkDestination(destPath, wantTarget string) (DestinationState, 
 		return StateNotSymlink, err.Error()
 	}
 	if info.Mode()&os.ModeSymlink == 0 {
+		if isSameFile(destPath, wantTarget) {
+			return StateSynced, "reached through a linked bucket directory"
+		}
+		if isLegacyClaudeSkillDir(destPath, wantTarget) {
+			return StateDrifted, "legacy skill dir linking only SKILL.md; sync replaces it with a link to the skill directory"
+		}
 		return StateNotSymlink, ""
 	}
 	current, err := os.Readlink(destPath)

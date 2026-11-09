@@ -137,7 +137,7 @@ func TestDetectArtifact_RuleAndWorkflow(t *testing.T) {
 func TestDetectArtifact_Unrecognised(t *testing.T) {
 	for _, in := range []string{
 		"notes/random.md",
-		".agents/", // bare bucket root
+		".agents/",       // bare bucket root
 		".agents/rules/", // rule needs .md
 		".agents/skills/",
 		"foo/bar/baz",

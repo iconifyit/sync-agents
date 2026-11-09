@@ -295,8 +295,8 @@ func readHooksState(path string) (*hooksStateInternal, error) {
 // hooksStateInternal is the on-disk shape, extended with a creation
 // flag that the public hooksState doesn't expose.
 type hooksStateInternal struct {
-	Entries            map[string]hooksStateEntry `json:"entries"`
-	SyncAgentsCreated  bool                       `json:"syncAgentsCreated,omitempty"`
+	Entries           map[string]hooksStateEntry `json:"entries"`
+	SyncAgentsCreated bool                       `json:"syncAgentsCreated,omitempty"`
 }
 
 // findHookOwner returns the fragment name that owns a given hook

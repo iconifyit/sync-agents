@@ -135,7 +135,16 @@ func RegenerateClaudeImports(claudeMDPath string, importPaths []string) (bool, e
 //     pairs are left verbatim (a pathological case we don't need to
 //     defend against).
 func replaceManagedBlock(existing, newBlock string) string {
-	startIdx := strings.Index(existing, ManagedImportBlockStart)
+	return replaceBlockBetweenMarkers(existing, newBlock, ManagedImportBlockStart, ManagedImportBlockEnd)
+}
+
+// replaceBlockBetweenMarkers is replaceManagedBlock generalized over
+// the marker pair, so more than one managed region can coexist in the
+// same file. CLAUDE.md now carries two: the AGENTS.md mirror and the
+// `@`-import block. Behavior for the import block is unchanged —
+// replaceManagedBlock simply passes its own markers through.
+func replaceBlockBetweenMarkers(existing, newBlock, startMarker, endMarker string) string {
+	startIdx := strings.Index(existing, startMarker)
 	if startIdx < 0 {
 		// No existing block. Append — with a separator blank line
 		// if the existing content doesn't already end with one.
@@ -149,7 +158,7 @@ func replaceManagedBlock(existing, newBlock string) string {
 		return existing + sep + "\n" + newBlock
 	}
 
-	endIdx := strings.Index(existing[startIdx:], ManagedImportBlockEnd)
+	endIdx := strings.Index(existing[startIdx:], endMarker)
 	if endIdx < 0 {
 		// Start present, end missing — malformed. Treat as if
 		// start was not present: append the block.
@@ -161,7 +170,7 @@ func replaceManagedBlock(existing, newBlock string) string {
 	}
 	// endIdx is relative to startIdx; make it absolute.
 	endIdx += startIdx
-	endFull := endIdx + len(ManagedImportBlockEnd)
+	endFull := endIdx + len(endMarker)
 
 	// Eat the trailing newline after the end marker (if any) so the
 	// replaced block owns its own trailing newline.

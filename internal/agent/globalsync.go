@@ -83,11 +83,12 @@ func (a *App) CmdGlobalSync(opts GlobalSyncOpts) error {
 	}
 
 	if len(artifacts) == 0 {
-		// Only bail when there are truly no artifacts AND no hooks.
-		// Hooks aren't discovered as Artifacts (they batch-merge
-		// into settings.json), so an empty artifact slice doesn't
-		// mean nothing to do when .agents/hooks/ has content.
-		if !hasClaudeTarget || !dirExists(filepath.Join(root, "hooks")) {
+		// Only bail when there are truly no artifacts AND nothing else
+		// to deliver to Claude: hooks aren't discovered as Artifacts
+		// (they batch-merge into settings.json), and an AGENTS.md is
+		// mirrored into CLAUDE.md even when the tree has no artifacts.
+		claudeHasWork := dirExists(filepath.Join(root, "hooks")) || ResolveGlobalAgentsMDPath(root) != ""
+		if !hasClaudeTarget || !claudeHasWork {
 			a.Info("no artifacts under " + root + "; nothing to sync")
 			return nil
 		}
@@ -131,7 +132,7 @@ func (a *App) CmdGlobalSync(opts GlobalSyncOpts) error {
 						Semantic: sem,
 					})
 				}
-				if err := a.applySymlinkDestination(tool.ID, art, dest); err != nil {
+				if err := a.applySymlinkDestination(tool.ID, dest); err != nil {
 					a.Warn(fmt.Sprintf("[%s] %s %q: %v", tool.ID, art.Type, art.Name, err))
 				}
 
@@ -151,6 +152,24 @@ func (a *App) CmdGlobalSync(opts GlobalSyncOpts) error {
 	// passive rules reach the filesystem but not the model.
 	if hasClaudeTarget && !a.DryRun {
 		claudeMDPath := filepath.Join(parent, ".claude", "CLAUDE.md")
+
+		// Mirror the global AGENTS.md — which already carries the
+		// injected AGENTS.preamble.md — into CLAUDE.md as its own
+		// managed block. Without this, preamble edits reach AGENTS.md
+		// but never the global CLAUDE.md, so every session outside the
+		// agents repo keeps loading stale principles.
+		agentsMDPath := ResolveGlobalAgentsMDPath(a.ResolveGlobalRoot())
+		if agentsMDPath != "" {
+			changed, err := RegenerateAgentsMDBlock(claudeMDPath, agentsMDPath)
+			if err != nil {
+				a.Warn(fmt.Sprintf("AGENTS.md mirror failed for %s: %v", claudeMDPath, err))
+			} else if changed {
+				a.Info(fmt.Sprintf("mirrored %s into %s", agentsMDPath, claudeMDPath))
+			} else {
+				a.Info(fmt.Sprintf("%s AGENTS.md mirror already current", claudeMDPath))
+			}
+		}
+
 		importPaths := CollectClaudeRuleImportPaths(parent, claudeRouted)
 		if len(importPaths) > 0 {
 			changed, err := RegenerateClaudeImports(claudeMDPath, importPaths)
@@ -164,6 +183,9 @@ func (a *App) CmdGlobalSync(opts GlobalSyncOpts) error {
 		}
 	} else if hasClaudeTarget && a.DryRun {
 		claudeMDPath := filepath.Join(parent, ".claude", "CLAUDE.md")
+		if agentsMDPath := ResolveGlobalAgentsMDPath(a.ResolveGlobalRoot()); agentsMDPath != "" {
+			a.Info(fmt.Sprintf("[dry-run] would mirror %s into %s", agentsMDPath, claudeMDPath))
+		}
 		importPaths := CollectClaudeRuleImportPaths(parent, claudeRouted)
 		if len(importPaths) > 0 {
 			a.Info(fmt.Sprintf("[dry-run] would regenerate %s with %d @-imports", claudeMDPath, len(importPaths)))
@@ -266,23 +288,30 @@ func (a *App) resolveSyncTools(targets []string) ([]Tool, error) {
 }
 
 // applySymlinkDestination creates or repairs the symlink at dest.Path
-// pointing at the artifact's content source. Handles three cases:
+// pointing at dest.Target. Handles four cases:
 //
 //   - Nothing at dest: create the symlink (after ensuring its parent
 //     dir exists).
 //   - Symlink already at dest: if it points at the right target,
-//     no-op (logged once at a higher level for brevity). Otherwise
-//     replace.
-//   - Non-symlink at dest: skip with warning unless App.Force is
-//     set, in which case the existing file is renamed to a
-//     `.replaced-by-sync-agents-<timestamp>` sibling and the symlink
-//     is placed.
+//     no-op (logged once at a higher level for brevity). A link to a
+//     directory outside the global root is the user's (see
+//     isUserDirLink) and is replaced only with App.Force, with a
+//     warning naming its old target. Any other link is repaired.
+//   - The target itself at dest, reached through a linked bucket dir
+//     (see isSameFile): already in place; nothing is changed.
+//   - A legacy Claude skill dir at dest (see isLegacyClaudeSkillDir):
+//     remove its one SKILL.md link and the then-empty dir, and place
+//     the directory link. Nothing but a link sync-agents created is
+//     removed, and nothing is followed into the skill's source.
+//   - Any other non-symlink at dest: skip with warning unless
+//     App.Force is set, in which case it is moved aside (see
+//     forcedBackupPath) and the symlink is placed.
 //
 // Symlinks are absolute paths (SPEC-002 §Global sync — symlink
 // semantics). Relative would be brittle because the global tree's
 // per-tool dirs are at different depths from ~/.agents/.
-func (a *App) applySymlinkDestination(toolID string, art Artifact, dest Destination) error {
-	target := symlinkTarget(art)
+func (a *App) applySymlinkDestination(toolID string, dest Destination) error {
+	target := dest.Target
 
 	if a.DryRun {
 		a.Info(fmt.Sprintf("[dry-run] [%s] would link %s -> %s", toolID, dest.Path, target))
@@ -298,11 +327,38 @@ func (a *App) applySymlinkDestination(toolID string, art Artifact, dest Destinat
 			if current == target {
 				return nil
 			}
-			// Drifted symlink — repair.
+			if isUserDirLink(dest.Path, a.ResolveGlobalRoot()) {
+				// A link to a directory outside the global root is the
+				// user's, as global clean also treats it.
+				if !a.Force {
+					return fmt.Errorf("user-owned link at %s -> %s; pass --force to replace", dest.Path, current)
+				}
+				if err := os.Remove(dest.Path); err != nil {
+					return err
+				}
+				a.Warn(fmt.Sprintf("[%s] replaced user-owned link %s -> %s", toolID, dest.Path, current))
+			} else {
+				// Drifted symlink — repair.
+				if err := os.Remove(dest.Path); err != nil {
+					return err
+				}
+				a.Info(fmt.Sprintf("[%s] repair: %s now -> %s", toolID, dest.Path, target))
+			}
+		} else if isSameFile(dest.Path, target) {
+			// The destination is the target itself, reached through a
+			// linked bucket dir (e.g. .claude/skills -> .agents/skills
+			// or .claude/rules -> .agents/rules).
+			// It is already in place, and moving it aside would move the
+			// artifact's source.
+			return nil
+		} else if isLegacyClaudeSkillDir(dest.Path, target) {
+			if err := os.Remove(filepath.Join(dest.Path, "SKILL.md")); err != nil {
+				return err
+			}
 			if err := os.Remove(dest.Path); err != nil {
 				return err
 			}
-			a.Info(fmt.Sprintf("[%s] repair: %s now -> %s", toolID, dest.Path, target))
+			a.Info(fmt.Sprintf("[%s] migrate: %s now links the whole skill directory %s", toolID, dest.Path, target))
 		} else {
 			// Non-symlink in the way. Without --force, refuse.
 			if !a.Force {
@@ -310,7 +366,13 @@ func (a *App) applySymlinkDestination(toolID string, art Artifact, dest Destinat
 			}
 			// With --force, rename the conflicting file/dir to a
 			// side path so it's recoverable.
-			backup := fmt.Sprintf("%s.replaced-by-sync-agents", dest.Path)
+			backup := forcedBackupPath(dest.Path, existing.IsDir())
+			if _, err := os.Lstat(backup); err == nil {
+				return fmt.Errorf("cannot move %s aside: %s already exists; move or remove it first", dest.Path, backup)
+			}
+			if err := os.MkdirAll(filepath.Dir(backup), 0o755); err != nil {
+				return err
+			}
 			if err := os.Rename(dest.Path, backup); err != nil {
 				return err
 			}
@@ -329,26 +391,76 @@ func (a *App) applySymlinkDestination(toolID string, art Artifact, dest Destinat
 	return nil
 }
 
-// symlinkTarget returns the path a tool's per-artifact symlink
-// should point at. For rules and workflows this is the .md file
-// itself; for skills it's the SKILL.md inside the source dir,
-// because Claude reads ~/.claude/skills/<name>/SKILL.md as the
-// metadata file even when the destination is structured as a dir.
-//
-// We do NOT include the skill's supporting files in the symlink
-// chain — they remain under ~/.agents/skills/<name>/ and are not
-// directly referenced by per-tool dirs. Tools that need them have
-// to walk the symlink target's parent dir, which is fine.
-func symlinkTarget(art Artifact) string {
-	if art.Type == ArtifactSkill {
-		return filepath.Join(art.SourcePath, "SKILL.md")
+// isUserDirLink reports whether path is a symlink to a directory
+// outside globalRoot. Such a link was made by the user (for example a
+// Claude skill linked straight to a working copy), not by global sync,
+// so it is the user's in the sense global clean already applies via
+// symlinkPointsInto.
+func isUserDirLink(path, globalRoot string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return false
 	}
-	return art.SourcePath
+	targetInfo, err := os.Stat(path)
+	if err != nil || !targetInfo.IsDir() {
+		return false
+	}
+	return !symlinkPointsInto(path, globalRoot)
+}
+
+// isSameFile reports whether path and target are the same file or
+// directory on disk, however each is reached.
+func isSameFile(path, target string) bool {
+	pathInfo, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	targetInfo, err := os.Stat(target)
+	return err == nil && os.SameFile(pathInfo, targetInfo)
+}
+
+// forcedBackupPath returns where --force moves a non-symlink that is
+// in the way of a destination.
+//
+// A file becomes a `<path>.replaced-by-sync-agents` sibling. A
+// directory (a skill dir such as ~/.claude/skills/<name>) instead goes
+// to `<tool dir>/.replaced-by-sync-agents/<bucket>/<name>`: a sibling
+// would stay inside the bucket the tool scans, and Claude would load a
+// backed-up skill directory as a second copy of the skill.
+func forcedBackupPath(destPath string, isDir bool) string {
+	if !isDir {
+		return destPath + ".replaced-by-sync-agents"
+	}
+	bucketDir := filepath.Dir(destPath)
+	return filepath.Join(filepath.Dir(bucketDir), ".replaced-by-sync-agents", filepath.Base(bucketDir), filepath.Base(destPath))
+}
+
+// isLegacyClaudeSkillDir reports whether path is the Claude skill
+// layout earlier versions of global sync produced: a real directory
+// whose only entry is a SKILL.md symlink to the SKILL.md inside
+// skillDir. Such a directory holds nothing but a link sync-agents
+// made, so replacing it with a link to skillDir loses nothing. Any
+// other content means the directory is not sync-agents' to replace.
+func isLegacyClaudeSkillDir(path, skillDir string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "SKILL.md" {
+		return false
+	}
+	link := filepath.Join(path, "SKILL.md")
+	linkInfo, err := os.Lstat(link)
+	if err != nil || linkInfo.Mode()&os.ModeSymlink == 0 {
+		return false
+	}
+	current, err := os.Readlink(link)
+	return err == nil && current == filepath.Join(skillDir, "SKILL.md")
 }
 
 // concatSourcePath returns the path RegenerateConcat should read for
-// this artifact's body. Same shape as symlinkTarget — the skill's
-// content is in SKILL.md.
+// this artifact's body. For skills, the content is in SKILL.md.
 func concatSourcePath(art Artifact) string {
 	if art.Type == ArtifactSkill {
 		return filepath.Join(art.SourcePath, "SKILL.md")

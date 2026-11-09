@@ -340,13 +340,17 @@ EOF
   [ -L "$CLAUDE_DIR/commands/deploy-rule.md" ]
 }
 
-@test "global sync: invocable single-file skill symlinked to claude/skills/<name>/SKILL.md" {
+@test "global sync: invocable skill directory symlinked to claude/skills/<name>" {
   "$SCRIPT" global init --global-root "$GLOBAL_ROOT"
   make_global_single_skill "code-review"
 
   run "$SCRIPT" global sync --global-root "$GLOBAL_ROOT" --targets claude
   [ "$status" -eq 0 ]
-  [ -L "$CLAUDE_DIR/skills/code-review/SKILL.md" ]
+  # Claude links the whole skill directory, so SKILL.md and any
+  # supporting files are reachable through it.
+  [ -L "$CLAUDE_DIR/skills/code-review" ]
+  [ "$(readlink "$CLAUDE_DIR/skills/code-review")" == "$GLOBAL_ROOT/skills/code-review" ]
+  [ -f "$CLAUDE_DIR/skills/code-review/SKILL.md" ]
 }
 
 @test "global sync: invocable workflow symlinked to claude/commands/" {

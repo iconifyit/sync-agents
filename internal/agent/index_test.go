@@ -35,51 +35,6 @@ func newLocalIndexTestApp(t *testing.T) (*App, string, *bytes.Buffer) {
 // @-import block listing each passive rule using project-relative
 // paths — the bridge that makes Claude actually load the rule
 // content (see issue #46).
-func TestCmdIndex_WritesClaudeImportsBlock(t *testing.T) {
-	a, root, _ := newLocalIndexTestApp(t)
-
-	// Seed two passive rules (no frontmatter — bucket default for
-	// rules is Passive).
-	for _, name := range []string{"security", "no-secrets"} {
-		if err := os.WriteFile(filepath.Join(root, ".agents", "rules", name+".md"), []byte("body\n"), 0o644); err != nil {
-			t.Fatalf("seed %s: %v", name, err)
-		}
-	}
-
-	if err := a.CmdIndex(); err != nil {
-		t.Fatalf("CmdIndex: %v", err)
-	}
-
-	agentsMD := filepath.Join(root, "AGENTS.md")
-	data, err := os.ReadFile(agentsMD)
-	if err != nil {
-		t.Fatalf("read AGENTS.md: %v", err)
-	}
-	s := string(data)
-
-	if !HasManagedImportBlock(s) {
-		t.Fatalf("managed block not written in AGENTS.md:\n%s", s)
-	}
-
-	imports := ExtractManagedImports(s)
-	want := map[string]bool{
-		".claude/rules/no-secrets.md": true,
-		".claude/rules/security.md":   true,
-	}
-	if len(imports) != len(want) {
-		t.Errorf("got %d imports %v, want %v", len(imports), imports, want)
-	}
-	for _, imp := range imports {
-		if !want[imp] {
-			t.Errorf("unexpected import %q", imp)
-		}
-		// Must be relative — no absolute paths in checked-in
-		// AGENTS.md so it ports across developers.
-		if filepath.IsAbs(imp) {
-			t.Errorf("import path should be relative: %q", imp)
-		}
-	}
-}
 
 // TestCmdIndex_EmptyAgentsTreeOmitsBlock verifies that a fresh
 // project with no rules/skills/workflows doesn't write an empty @-
@@ -355,9 +310,9 @@ func TestListMDFilesRecursive_Nested(t *testing.T) {
 		t.Errorf("expected 3 files, got %d: %v", len(names), names)
 	}
 	want := map[string]bool{
-		"plan":                 true,
-		"effort-a/rollout":     true,
-		"effort-b/testing":     true,
+		"plan":             true,
+		"effort-a/rollout": true,
+		"effort-b/testing": true,
 	}
 	for _, n := range names {
 		if !want[n] {
@@ -513,5 +468,37 @@ func TestCmdIndex_NoFix(t *testing.T) {
 	// Just verify CmdIndex doesn't fail — no-fix is handled at CLI layer.
 	if err := app.CmdIndex(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestCmdIndex_OldImportBlockDoesNotFreezeIndex: an AGENTS.md written
+// by an earlier version (carrying an @-import block) is replaced by the
+// freshly generated index. The old content must not survive just
+// because it held an import block: a rule added since must appear, and
+// a rule removed since must disappear.
+func TestCmdIndex_OldImportBlockDoesNotFreezeIndex(t *testing.T) {
+	a, root, _ := newLocalIndexTestApp(t)
+	old := "# AGENTS\n\n## Rules\n\n- [retired](.agents/rules/retired.md)\n\n" +
+		ManagedImportBlockStart + "\n@.claude/rules/retired.md\n" + ManagedImportBlockEnd + "\n"
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".agents", "rules", "security.md"), []byte("body\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.CmdIndex(); err != nil {
+		t.Fatalf("CmdIndex: %v", err)
+	}
+
+	s, _ := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	if !strings.Contains(string(s), "[security]") {
+		t.Errorf("new rule missing; the old file was kept:\n%s", s)
+	}
+	if strings.Contains(string(s), "retired") {
+		t.Errorf("removed rule still indexed; the old file was kept:\n%s", s)
+	}
+	if HasManagedImportBlock(string(s)) {
+		t.Errorf("import block written:\n%s", s)
 	}
 }

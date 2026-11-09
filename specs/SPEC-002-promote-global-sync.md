@@ -155,7 +155,7 @@ Per-tool destination map:
 
 | Tool | Invocable destination | Passive destination |
 |---|---|---|
-| Claude | `~/.claude/skills/<name>/SKILL.md` (for skill dirs) or `~/.claude/commands/<name>.md` (for single-file invocables) | `~/.claude/rules/<name>.md` |
+| Claude | `~/.claude/skills/<name>`, a link to the skill directory (for skill dirs), or `~/.claude/commands/<name>.md` (for single-file invocables) | `~/.claude/rules/<name>.md` |
 | Windsurf / Codeium | `~/.codeium/windsurf/global_workflows/<name>.md` (single-file) — directory invocables get flattened or rejected (see scenario) | concat into `~/.codeium/windsurf/memories/global_rules.md` |
 | Cursor | `~/.cursor/rules/<name>.md` (Cursor has no separate invocable surface today — write passive) | `~/.cursor/rules/<name>.md` |
 | Copilot | `~/.github/copilot/instructions.md` (concat) | `~/.github/copilot/instructions.md` (concat) |
@@ -306,7 +306,7 @@ Global provider directory map:
 
 | scope     | Target token | Global directory                                  | local dir mapping (for sync) / symlink | INVOCABLE ? (/)    | Context to Sync to                                          |
 | --------- | ------------ | ------------------------------------------------- | -------------------------------------- | ------------------ | ----------------------------------------------------------- |
-| skills    | `claude`     | `~/.claude/skills/${name}/SKILL.md`               | `~/.claude/skills/${name}/SKILL.md`    | YES                | 1 to 1                                                      |
+| skills    | `claude`     | `~/.claude/skills/${name}` (link to the skill dir) | `~/.claude/skills/${name}`             | YES                | 1 to 1                                                      |
 | skills    | `windsurf`   | `~/.codeium/windsurf/skills/${name}/SKILL.md`     | `~/.windsurf/skills/${name}/SKILL.md`  | NO auto run        | 1 to 2 (workflows/skills) claudee skills picked by windsurf |
 | skills    | `github`     | `~/.github/skills/${name}/SKILL.md`               | `~/.github/skills/${name}/SKILL.md`    | YES                | 1 to 1                                                      |
 | rules     | `claude`     | `~/.claude/rules/${name}.md`                      | `~/.claude/rules/${name}.md`           | NO                 | 1 to 1                                                      |
@@ -363,7 +363,7 @@ Semantic resolution order:
 
 `global sync` SHALL use the resolved semantic for every destination
 calculation. Symlink vs concat is implied by the destination:
-- 1:1 paths (e.g. `~/.claude/skills/<name>/SKILL.md`) get a symlink.
+- 1:1 paths (e.g. `~/.claude/skills/<name>`) get a symlink. A Claude skill links the skill directory, so its supporting files are reachable alongside `SKILL.md`.
 - Concat paths (e.g. `~/.codeium/windsurf/memories/global_rules.md`) get a
   regenerated merged file each sync. Source `.agents/` files stay
   authoritative; the concat output is a derived artifact.
@@ -938,7 +938,7 @@ so they never touch the real `$HOME`.
 - [ ] `global sync` does **not** create `.windsurf/` anywhere under global root.
 - [ ] Semantic routing end-to-end: a `.agents/skills/foo/SKILL.md` with no
       frontmatter lands at `~/.codeium/windsurf/global_workflows/foo.md`
-      and `~/.claude/skills/foo/SKILL.md` after a `promote skill foo &&
+      and `~/.claude/skills/foo` (a link to the skill dir) after a `promote skill foo &&
       global sync`. Verify `~/.codeium/windsurf/memories/global_rules.md`
       does not mention `foo`.
 - [ ] Concat regen end-to-end: two rules result in a `global_rules.md`
